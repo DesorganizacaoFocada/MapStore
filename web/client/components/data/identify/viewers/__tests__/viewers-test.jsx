@@ -1,0 +1,357 @@
+/**
+ * Copyright 2015, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import expect from 'expect';
+import React from 'react';
+import ReactDOM from 'react-dom';
+
+import HTMLViewer from '../HTMLViewer';
+import JSONViewer from '../JSONViewer';
+import TemplateViewer from '../TemplateViewer';
+import TextViewer from '../TextViewer';
+
+import configureStore from 'redux-mock-store';
+import thunkMiddleware from 'redux-thunk';
+import {Provider} from "react-redux";
+const mockStore = configureStore([thunkMiddleware]);
+const store = mockStore({});
+
+const SimpleRowViewer = (props) => {
+    return <div>{['name', 'description'].map((key) => <span key={key}>{key}:{props[key]}</span>)}</div>;
+};
+
+describe('Identity Viewers', () => {
+    beforeEach((done) => {
+        document.body.innerHTML = '<div id="container"></div>';
+        setTimeout(done);
+    });
+
+    afterEach((done) => {
+        ReactDOM.unmountComponentAtNode(document.getElementById("container"));
+        document.body.innerHTML = '';
+        setTimeout(done);
+    });
+
+    it('test HTMLViewer', () => {
+        const cmp = ReactDOM.render(<HTMLViewer response="<span class='testclass'>test</span>" />, document.getElementById("container"));
+        expect(cmp).toExist();
+
+        const cmpDom = ReactDOM.findDOMNode(cmp);
+        expect(cmpDom).toExist();
+
+        // content is rendered inside a shadow root, so it is not reachable via the
+        // host's normal DOM queries — query the shadow root instead.
+        expect(cmpDom.getElementsByClassName("testclass").length).toBe(0);
+        expect(cmpDom.shadowRoot).toExist();
+        expect(cmpDom.shadowRoot.querySelectorAll(".testclass").length).toBe(1);
+    });
+
+    it('HTMLViewer scopes the response <style> block inside the shadow root', () => {
+        const response = "<html><head><style>table.featureInfo{border:1px solid #ddd;}</style></head><body><table class='featureInfo'><tr><td>value</td></tr></table></body></html>";
+        const cmp = ReactDOM.render(<HTMLViewer response={response} />, document.getElementById("container"));
+        const cmpDom = ReactDOM.findDOMNode(cmp);
+        expect(cmpDom.shadowRoot).toExist();
+        // <style> preserved (regression #12618) but confined to the shadow root
+        expect(cmpDom.shadowRoot.querySelector("style")).toExist();
+        expect(cmpDom.shadowRoot.querySelector("table.featureInfo")).toExist();
+        // and it does NOT leak into the main document (light DOM has no style,
+        // and no document stylesheet carries the WMS rule)
+        expect(cmpDom.querySelector("style")).toNotExist();
+        const leaked = Array.from(document.querySelectorAll("style"))
+            .some((s) => s.textContent.indexOf("table.featureInfo") !== -1);
+        expect(leaked).toBe(false);
+    });
+
+    it('test TextViewer', () => {
+        const cmp = ReactDOM.render(<TextViewer response="testtext" />, document.getElementById("container"));
+        expect(cmp).toExist();
+
+        const cmpDom = ReactDOM.findDOMNode(cmp);
+        expect(cmpDom).toExist();
+
+        expect(cmpDom.innerHTML.indexOf('testtext') !== -1).toBe(true);
+    });
+
+    it('test JSONViewer', () => {
+        const container = document.getElementById("container");
+        ReactDOM.render(<Provider store={store}><JSONViewer response={{
+            features: [{
+                id: 1,
+                properties: {
+                    name: 'myname',
+                    description: 'mydescription'
+                }
+            }]
+        }} rowViewer={SimpleRowViewer}/></Provider>, container);
+        expect(container.innerHTML).toExist();
+
+        const cmpDom = container.firstElementChild;
+        expect(cmpDom).toExist();
+
+        expect(cmpDom.innerHTML.indexOf('myname') !== -1).toBe(true);
+        expect(cmpDom.innerHTML.indexOf('mydescription') !== -1).toBe(true);
+    });
+
+    it('test JSONViewer with custom row viewer', () => {
+        const MyRowViewer = (props) => {
+            return <span>This is my viewer: {props.feature.id}</span>;
+        };
+        const container = document.getElementById("container");
+        ReactDOM.render(<Provider store={store}><JSONViewer rowViewer={MyRowViewer} response={{
+            features: [{
+                id: 1,
+                properties: {
+                    name: 'myname',
+                    description: 'mydescription'
+                }
+            }]
+        }} /></Provider>, container);
+        expect(container.innerHTML).toExist();
+
+        const cmpDom = container.firstElementChild;
+        expect(cmpDom).toExist();
+        expect(cmpDom.innerText.indexOf('This is my viewer: 1') !== -1).toBe(true);
+    });
+
+    it('test JSONViewer with TEMPLATE', () => {
+        const container = document.getElementById("container");
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p id="my-template">the property name is ${ properties.name }</p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, container);
+        expect(container.innerHTML).toExist();
+
+        const cmpDom = container.firstElementChild;
+        expect(cmpDom).toExist();
+
+        const templateDOM = document.getElementById('my-template');
+        expect(templateDOM.innerHTML).toBe('the property name is myname');
+
+    });
+
+    it('test JSONViewer with TEMPLATE and missing properties', () => {
+        const container = document.getElementById("container");
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p id="my-template">the property id is ${ properties.id }</p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, container);
+        expect(container.innerHTML).toExist();
+
+        const cmpDom = container.firstElementChild;
+        expect(cmpDom).toExist();
+
+        const templateDOM = document.getElementById('my-template');
+        expect(templateDOM.innerHTML).toBe('the property id is ');
+
+    });
+
+    it('test JSONViewer with TEMPLATE with tag inside variable', () => {
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p id="my-template">the property name is ${<p>properties.name</p>}</p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, document.getElementById("container"));
+
+        let templateDOM = document.getElementById('my-template');
+        expect(templateDOM.innerHTML).toBe('the property name is myname');
+
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p id="my-template">the property description is ${prope<p>rties.description</p>}</p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, document.getElementById("container"));
+
+        templateDOM = document.getElementById('my-template');
+        expect(templateDOM.innerHTML).toBe('the property description is mydescription');
+    });
+
+    it('test JSONViewer with TEMPLATE multiple features', () => {
+        const container = document.getElementById("container");
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p class="my-template">the property id is ${ id }</p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }, {
+                        id: 2,
+                        properties: {
+                            name: 'newName',
+                            description: 'newDescription'
+                        }
+                    }]
+                }} /></Provider>, container);
+        expect(container.innerHTML).toExist();
+
+        const cmpDom = container.firstElementChild;
+        expect(cmpDom).toExist();
+
+        const templateDOM = document.getElementsByClassName('my-template');
+        expect(templateDOM[0].innerHTML).toBe('the property id is 1');
+        expect(templateDOM[1].innerHTML).toBe('the property id is 2');
+    });
+
+    it('test JSONViewer with TEMPLATE but missing/empty template', () => {
+        // when template is missing, undefined or equal to <p><br></p> response is displayed in PROPERTIES format
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, document.getElementById("container"));
+
+        let propertiesViewer = document.getElementsByClassName('mapstore-json-viewer');
+        expect(propertiesViewer.length).toBe(1);
+
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: ''
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, document.getElementById("container"));
+
+        propertiesViewer = document.getElementsByClassName('mapstore-json-viewer');
+        expect(propertiesViewer.length).toBe(1);
+
+        // <p><br></p> is the value of react-quill when empty
+        ReactDOM.render(<Provider store={store}>
+            <JSONViewer
+                layer={{
+                    featureInfo: {
+                        format: 'TEMPLATE',
+                        template: '<p><br></p>'
+                    }
+                }}
+                response={{
+                    features: [{
+                        id: 1,
+                        properties: {
+                            name: 'myname',
+                            description: 'mydescription'
+                        }
+                    }]
+                }} /></Provider>, document.getElementById("container"));
+
+        propertiesViewer = document.getElementsByClassName('mapstore-json-viewer');
+        expect(propertiesViewer.length).toBe(1);
+    });
+
+
+    describe('TemplateViewer', () => {
+        it('TemplateViewer resolves placeholders without compiling them', () => {
+            window.__viewerEvaluated = undefined;
+            const layer = {
+                featureInfo: {
+                    format: 'TEMPLATE',
+                    template: '<b>${(window.__viewerEvaluated = true)}</b>'
+                }
+            };
+            const response = { features: [{ id: 1, properties: { name: 'name' } }] };
+            ReactDOM.render(<TemplateViewer layer={layer} response={response} />, document.getElementById("container"));
+            expect(window.__viewerEvaluated).toBe(undefined);
+        });
+        it('TemplateViewer escapes the html of the feature values', () => {
+            const layer = {
+                featureInfo: { format: 'TEMPLATE', template: '<div>${properties.description}</div>' }
+            };
+            const response = { features: [{ id: 1, properties: { description: '<script>window.__viewerScript = true</script>' } }] };
+            window.__viewerScript = undefined;
+            ReactDOM.render(<TemplateViewer layer={layer} response={response} />, document.getElementById("container"));
+            expect(window.__viewerScript).toBe(undefined);
+            expect(document.getElementById("container").innerHTML.indexOf('<script')).toBe(-1);
+        });
+        it('TemplateViewer keeps the markup of the template', () => {
+            const layer = {
+                featureInfo: { format: 'TEMPLATE', template: '<b>Name: ${properties.name}</b>' }
+            };
+            const response = { features: [{ id: 1, properties: { name: 'Rome' } }] };
+            ReactDOM.render(<TemplateViewer layer={layer} response={response} />, document.getElementById("container"));
+            expect(document.getElementById("container").innerHTML.indexOf('<b>Name: Rome</b>')).toBeGreaterThan(-1);
+        });
+    });
+});

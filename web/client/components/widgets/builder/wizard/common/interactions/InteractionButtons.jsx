@@ -1,0 +1,70 @@
+/*
+ * Copyright 2025, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import React from 'react';
+import FlexBox from '../../../../../layout/FlexBox';
+import Button from '../../../../../layout/Button';
+import { Glyphicon } from 'react-bootstrap';
+import tooltip from '../../../../../misc/enhancers/tooltip';
+import Message from '../../../../../I18N/Message';
+import { getVisibleConfigurationKeys } from './interactionHelpers';
+import { CONFIGURATION_METADATA, CONFIGURATION_RENDER_MODES } from './interactionConstants';
+
+const TButton = tooltip(Button);
+
+/**
+ * Buttons to manage the interaction (plug/unplug and configuration)
+ * @param {object} item the InteractionMetadata item
+ * @param {boolean} plugged this means there the interaction is active
+ * @param {boolean} setPlugged activates the plug for the interaction
+ * @param {object} configuration the configuration for the interaction, if any
+ * @param {boolean} showConfiguration tells if the configuration is visible or not
+ * @param {function} setShowConfiguration toggles the UI for configuration
+ * @param {boolean} isPluggable tells if the interaction can be plugged or not
+ * @param {boolean} isConfigurable tells if the interaction can be configured or not
+ * @param {object} plugConstraints describes whether plugging is disabled and why
+ * @returns {React.ReactElement}
+ */
+const InteractionButtons = ({ plugged, setPlugged, showConfiguration, setShowConfiguration = () => {}, isPluggable, isConfigurable, plugConstraints = {}, configuration = {}, context = {}, setConfiguration = () => {} }) => {
+    const { disabled: isPlugConstrained = false, reason: plugConstraintReason = null } = plugConstraints;
+    const contextUpdated = {...context, plugged};
+    const inlineKeys = getVisibleConfigurationKeys(configuration, contextUpdated, CONFIGURATION_RENDER_MODES.INLINE_BUTTON);
+    return (
+        <FlexBox gap="xs" className={`ms-interaction-buttons${isPlugConstrained ? ' is-disabled' : ''}`}>
+            {inlineKeys.map(key => {
+                const metadata = CONFIGURATION_METADATA[key];
+                return (<TButton key={key} borderTransparent
+                    variant={configuration[key] ? "primary" : undefined}
+                    tooltip={<Message msgId={metadata.infoMsgByTargetType?.[contextUpdated.targetType] ?? metadata.infoMsgByTargetType?.default} />}
+                    onClick={() => setConfiguration({ ...configuration, [key]: !configuration[key] })}>
+                    <Message msgId={metadata.label} />
+                </TButton>);
+            })}
+            {isConfigurable && <TButton
+                visible={isConfigurable}
+                onClick={() => setShowConfiguration(!showConfiguration)}
+                borderTransparent
+                tooltip={plugConstraintReason || <Message msgId="widgets.filterWidget.targetAutomaticallyNotConnectableTooltip" />}
+                variant={showConfiguration ? "primary" : undefined}
+
+            >
+                <Glyphicon glyph="cog" />
+            </TButton>}
+            <TButton
+                disabled={!isPluggable || isPlugConstrained}
+                tooltip={plugConstraintReason || undefined}
+                onClick={() => setPlugged(!plugged)}
+                borderTransparent
+                variant={plugged ? "success" : undefined}
+            >
+                <Glyphicon glyph={plugged ? "plug" : "unplug"} />
+            </TButton>
+        </FlexBox>
+    );
+};
+
+export default InteractionButtons;

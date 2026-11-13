@@ -1,0 +1,163 @@
+/**
+ * Copyright 2019, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import expect from 'expect';
+
+import { openQueryBuilder, discardCurrentFilter, applyFilter } from '../../actions/layerFilter';
+import { QUERY_FORM_SEARCH, loadFilter as loadQueryFilter, reset } from '../../actions/queryform';
+import queryformReducer from '../../reducers/queryform';
+import { testEpic } from './epicTestUtils';
+import { handleLayerFilterPanel, restoreSavedFilter, onApplyFilter } from '../layerfilter';
+
+describe('layerFilter Epics', () => {
+    it("handleLayerFilterPanel is correctly initiated and react to QUERY_FORM_SEARCH", (done) => {
+        let action = [openQueryBuilder(), {type: QUERY_FORM_SEARCH}];
+
+        // State need a selected layers
+        const state = {layers: {
+            flat: [{id: "topp:states__5", name: "topp:states", search: {url: "searchUrl"}, url: "url"}],
+            selected: ["topp:states__5"]}
+        };
+        testEpic(handleLayerFilterPanel, 6, action, (actions) => {
+            expect(actions[0].type).toBe("FEATURE_TYPE_SELECTED");
+            expect(actions[0].url).toBe("searchUrl");
+            expect(actions[1].type).toBe("QUERYFORM:LOAD_FILTER");
+            expect(actions[2].type).toBe("LAYER_FILTER:INIT_LAYER_FILTER");
+            expect(actions[3].type).toBe("SET_CONTROL_PROPERTY");
+            expect(actions[4].type).toBe("QUERY:TOGGLE_LAYER_FILTER");
+            expect(actions[5].type).toBe("CHANGE_LAYER_PROPERTIES");
+            done();
+
+        }, state);
+    });
+    it("handleLayerFilterPanel is correctly initiated and react to QUERY_FORM_SEARCH, no search url", (done) => {
+        let action = [openQueryBuilder(), {type: QUERY_FORM_SEARCH}];
+
+        // State need a selected layers
+        const state = {layers: {
+            flat: [{id: "topp:states__5", name: "topp:states", url: "url", fields: [{name: "STATE_NAME", type: "string", alias: "State Name"}]}],
+            selected: ["topp:states__5"]}
+        };
+        testEpic(handleLayerFilterPanel, 6, action, ([featureTypeSelected, loadFilter, initLayerFilter, setControlProperty, toggleLayerFilter, changeLayerProperties]) => {
+            expect(featureTypeSelected.type).toBe("FEATURE_TYPE_SELECTED");
+            expect(featureTypeSelected.url).toBe("url");
+            expect(featureTypeSelected.typeName).toBe("topp:states");
+            expect(featureTypeSelected.fields).toEqual([{name: "STATE_NAME", type: "string", alias: "State Name"}]);
+
+            expect(loadFilter.type).toBe("QUERYFORM:LOAD_FILTER");
+            expect(initLayerFilter.type).toBe("LAYER_FILTER:INIT_LAYER_FILTER");
+            expect(setControlProperty.type).toBe("SET_CONTROL_PROPERTY");
+            expect(toggleLayerFilter.type).toBe("QUERY:TOGGLE_LAYER_FILTER");
+            expect(changeLayerProperties.type).toBe("CHANGE_LAYER_PROPERTIES");
+            done();
+
+        }, state);
+    });
+    it("preserves other filters when the primary layer filter is cleared", (done) => {
+        const widgetFilter = { id: "selector", appliedFromWidget: "filter-widget-1" };
+        const legendFilter = { id: "interactiveLegend", filters: [{ format: "cql", body: "LAND_KM > 100" }] };
+        const existingFilters = [widgetFilter, legendFilter];
+        const state = {layers: {
+            flat: [{
+                id: "topp:states__5",
+                name: "topp:states",
+                search: {url: "searchUrl"},
+                layerFilter: {
+                    filterFields: [{ attribute: "STATE_NAME", value: "Arizona" }],
+                    filters: existingFilters
+                }
+            }],
+            selected: ["topp:states__5"]
+        }};
+        testEpic(handleLayerFilterPanel, 6, [openQueryBuilder(), {type: QUERY_FORM_SEARCH, filterObj: {}}], (actions) => {
+            expect(actions[5].type).toBe("CHANGE_LAYER_PROPERTIES");
+            expect(actions[5].newProperties.layerFilter.filterFields).toEqual([]);
+            expect(actions[5].newProperties.layerFilter.filters).toEqual(existingFilters);
+            done();
+        }, state);
+    });
+    it("preserves other filters after reset and applying a new primary filter", (done) => {
+        const filters = [
+            { id: "selector", format: "logic", version: "1.0.0", logic: "OR", filters: [{ format: "cql", version: "1.0.0", body: "SUB_REGION = 'Mtn'" }], appliedFromWidget: "filter-widget-1" },
+            { id: "interactiveLegend", format: "logic", version: "1.0.0", logic: "OR", filters: [{ format: "cql", version: "1.0.0", body: "LAND_KM > 100000" }] }
+        ];
+        const layer = {
+            id: "states",
+            name: "topp:states",
+            search: { url: "searchUrl" },
+            layerFilter: { filterFields: [], filters }
+        };
+        const state = {
+            layers: { flat: [layer], selected: [layer.id] },
+            queryform: queryformReducer(undefined, loadQueryFilter(layer.layerFilter))
+        };
+        const store = testEpic(handleLayerFilterPanel, 7, openQueryBuilder(), (actions) => {
+            expect(actions[5].newProperties.layerFilter.filters).toEqual(filters);
+            const result = actions[6].newProperties.layerFilter;
+            expect(result.filters).toEqual(filters);
+            expect(result.filterFields[0].attribute).toBe("PERSONS");
+            expect(result.filterFields[0].operator).toBe(">");
+            expect(result.filterFields[0].value).toBe(2000000);
+        }, () => state, done);
+        state.queryform = queryformReducer(state.queryform, reset());
+        store.dispatch({ type: QUERY_FORM_SEARCH, filterObj: {} });
+        state.queryform = {
+            ...state.queryform,
+            filterFields: [{ rowId: 1, groupId: 1, attribute: "PERSONS", operator: ">", value: 2000000, type: "number" }]
+        };
+        store.dispatch({ type: QUERY_FORM_SEARCH, filterObj: state.queryform });
+    });
+    it("clears the layer filter when reset leaves no other filters", (done) => {
+        const layer = { id: "states", name: "topp:states", search: { url: "searchUrl" }, layerFilter: { filterFields: [{ value: "Arizona" }] } };
+        const state = { layers: { flat: [layer], selected: [layer.id] } };
+        testEpic(handleLayerFilterPanel, 6, [openQueryBuilder(), { type: QUERY_FORM_SEARCH, filterObj: {} }], (actions) => {
+            expect(actions[5].newProperties.layerFilter).toBe(undefined);
+        }, state, done);
+    });
+    it("preserves the edited layer's filters when selection changes before reset", (done) => {
+        const editedFilter = { id: "edited-filter" };
+        const selectedFilter = { id: "other-filter" };
+        const layers = [
+            { id: "edited", name: "edited", search: { url: "searchUrl" }, layerFilter: { filters: [editedFilter] } },
+            { id: "other", name: "other", layerFilter: { filters: [selectedFilter] } }
+        ];
+        let state = { layers: { flat: layers, selected: ["edited"] } };
+        const store = testEpic(handleLayerFilterPanel, 6, openQueryBuilder(), (actions) => {
+            expect(actions[5].layer).toBe("edited");
+            expect(actions[5].newProperties.layerFilter.filters).toEqual([editedFilter]);
+        }, () => state, done);
+        state = { ...state, layers: { ...state.layers, selected: ["other"] } };
+        store.dispatch({ type: QUERY_FORM_SEARCH, filterObj: {} });
+    });
+    it('handleLayerFilterPanel with fields', () => {
+
+    });
+    it("restoreSavedFilter throws correct action", (done) => {
+        let action = discardCurrentFilter();
+
+        // State need a selected layers
+        testEpic(restoreSavedFilter, 4, action, (actions) => {
+            expect(actions[0].type).toBe("CHANGE_DRAWING_STATUS");
+            expect(actions[1].type).toBe("QUERYFORM:LOAD_FILTER");
+            expect(actions[2].type).toBe("QUERY_FORM_SEARCH");
+            expect(actions[3].type).toBe("INIT_QUERY_PANEL");
+            done();
+
+        });
+    });
+    it("onApplyFilter throws correct action", (done) => {
+        let action = applyFilter();
+
+        // State need a selected layers
+        testEpic(onApplyFilter, 1, action, (actions) => {
+            expect(actions[0].type).toBe("LAYER_FILTER:APPLIED_FILTER");
+            done();
+
+        });
+    });
+});

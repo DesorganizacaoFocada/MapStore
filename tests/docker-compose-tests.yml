@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+
+  ldap:
+    build:
+      context: ./tests/acme-ldap/
+    image: geosolutions-mapstore/acme-ldap
+    container_name: ldap
+    profiles:
+      - base
+    networks:
+      - mapstore-network
+
+  mapstore:
+    environment:
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD for endpoint tests}
+    volumes:
+      - ./tests/ldap.properties:/mapstore/datadir/ldap.properties:rw
+    depends_on:
+      - postgres
+      - ldap
+
+  sut:
+    environment:
+      AT_PWD: ${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD for endpoint tests}

@@ -1,0 +1,765 @@
+/**
+ * Copyright 2015-2016, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import { defaults, DragPan, MouseWheelZoom } from 'ol/interaction';
+import { defaults as defaultControls } from 'ol/control';
+import Map from 'ol/Map';
+import View from 'ol/View';
+import { get as getProjection, toLonLat } from 'ol/proj';
+import Zoom from 'ol/control/Zoom';
+import GeoJSON from 'ol/format/GeoJSON';
+import {LineString, MultiLineString, MultiPoint, MultiPolygon, Polygon, Point} from "ol/geom";
+
+import PropTypes from 'prop-types';
+import React from 'react';
+
+import {reproject, reprojectBbox, normalizeLng, normalizeSRS } from '../../../utils/CoordinatesUtils';
+import { getProjection as msGetProjection }  from '../../../utils/ProjectionUtils';
+import ConfigUtils from '../../../utils/ConfigUtils';
+import mapUtils, { isNearlyEqual, getResolutionsForProjection } from '../../../utils/MapUtils';
+import projUtils from '../../../utils/openlayers/projUtils';
+import { DEFAULT_INTERACTION_OPTIONS } from '../../../utils/openlayers/DrawUtils';
+
+import {isEqual, find, throttle, isArray, isNil} from 'lodash';
+
+import GeoTIFF from 'ol/source/GeoTIFF.js';
+
+import 'ol/ol.css';
+
+// add overrides for css
+import './mapstore-ol-overrides.css';
+import Feature from "ol/Feature";
+import RenderFeature from "ol/render/Feature";
+import withBatchedLayerLoading from '../enhancers/withBatchedLayerLoading';
+
+const geoJSONFormat = new GeoJSON();
+
+export class OpenlayersMap extends React.Component {
+    static propTypes = {
+        id: PropTypes.string,
+        document: PropTypes.object,
+        style: PropTypes.object,
+        center: ConfigUtils.PropTypes.center,
+        zoom: PropTypes.number.isRequired,
+        mapStateSource: ConfigUtils.PropTypes.mapStateSource,
+        projection: PropTypes.string,
+        projectionDefs: PropTypes.array,
+        onMapViewChanges: PropTypes.func,
+        onResolutionsChange: PropTypes.func,
+        onClick: PropTypes.func,
+        mapOptions: PropTypes.object,
+        zoomControl: PropTypes.bool,
+        mousePointer: PropTypes.string,
+        onMouseMove: PropTypes.func,
+        onLayerLoading: PropTypes.func,
+        onLayerLoad: PropTypes.func,
+        onLayerError: PropTypes.func,
+        resize: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+        measurement: PropTypes.object,
+        changeMeasurementState: PropTypes.func,
+        registerHooks: PropTypes.bool,
+        hookRegister: PropTypes.object,
+        interactive: PropTypes.bool,
+        onCreationError: PropTypes.func,
+        bbox: PropTypes.object,
+        wpsBounds: PropTypes.object,
+        onWarning: PropTypes.func,
+        maxExtent: PropTypes.array,
+        limits: PropTypes.object,
+        onMouseOut: PropTypes.func,
+        editScale: PropTypes.bool
+    };
+
+    static defaultProps = {
+        id: 'map',
+        onMapViewChanges: () => { },
+        onResolutionsChange: () => { },
+        onCreationError: () => { },
+        onClick: null,
+        onMouseMove: () => { },
+        mapOptions: {},
+        projection: 'EPSG:3857',
+        projectionDefs: [],
+        onLayerLoading: () => { },
+        onLayerLoad: () => { },
+        onLayerError: () => { },
+        resize: 0,
+        registerHooks: true,
+        hookRegister: mapUtils,
+        interactive: true,
+        onMouseOut: () => {},
+        center: { x: 13, y: 45, crs: 'EPSG:4326' },
+        zoom: 5
+    };
+
+    componentDidMount() {
+
+        // Subscribe this map's OL adapter to the registry. The unsubscribe is
+        // captured so componentWillUnmount can release the listener and avoid
+        // accumulation across mount/unmount cycles (geostories, dashboards).
+        // Static projectionDefs and built-in defs (e.g. EPSG:4269) are already
+        // registered by StandardApp / ProjectionRegistry module load - the OL
+        // adapter receives them via the onRegister replay on subscribe.
+        this.unsubscribeProjAdapter = projUtils.initOLProjectionAdapter();
+
+        let center = reproject([this.props.center.x, this.props.center.y], 'EPSG:4326', this.props.projection);
+        // interactive flag is used only for initializations,
+        // TODO manage it also when it changes status (ComponentWillReceiveProps)
+        let interactionsOptions = Object.assign(
+            this.props.interactive ?
+                {} :
+                {
+                    doubleClickZoom: false,
+                    dragPan: false,
+                    altShiftDragRotate: false,
+                    keyboard: false,
+                    mouseWheelZoom: false,
+                    shiftDragZoom: false,
+                    pinchRotate: false,
+                    pinchZoom: false
+                },
+            this.props.mapOptions.interactions);
+
+        let interactions = defaults(Object.assign({
+            dragPan: false,
+            mouseWheelZoom: false
+        }, interactionsOptions, {}));
+        if (interactionsOptions === undefined || interactionsOptions.dragPan === undefined) {
+            this.dragPanInteraction = new DragPan({ kinetic: false });
+            interactions.extend([
+                this.dragPanInteraction
+            ]);
+        }
+        if (interactionsOptions === undefined || interactionsOptions.mouseWheelZoom === undefined) {
+            this.mouseWheelInteraction = new MouseWheelZoom({ duration: 0 });
+            interactions.extend([
+                this.mouseWheelInteraction
+            ]);
+        }
+        let controls = defaultControls(Object.assign({
+            zoom: this.props.zoomControl,
+            attributionOptions: Object.assign({
+                collapsible: false
+            }, this.props.mapOptions.attribution && this.props.mapOptions.attribution.container ? {
+                target: this.getDocument().querySelector(this.props.mapOptions.attribution.container)
+            } : {})
+        }, this.props.mapOptions.controls));
+
+        let map = new Map({
+            layers: [],
+            controls: controls,
+            interactions: interactions,
+            maxTilesLoading: this.props.mapOptions?.maxTilesLoading ?? Infinity,
+            target: this.getDocument().getElementById(this.props.id) || `${this.props.id}`,
+            view: this.createView(center, Math.round(this.props.zoom), this.props.projection, this.props.mapOptions && this.props.mapOptions.view, this.props.limits)
+        });
+
+        this.map = map;
+        if (this.props.registerHooks) {
+            this.registerHooks();
+        }
+        this.map.disabledListeners = {};
+        this.map.disableEventListener = (event) => {
+            this.map.disabledListeners[event] = true;
+        };
+        this.map.enableEventListener = (event) => {
+            delete this.map.disabledListeners[event];
+        };
+        // The timeout is needed to cover the delay we have for the throttled mouseMove event.
+        this.map.getViewport().addEventListener('mouseout', () => {
+            setTimeout(() => this.props.onMouseOut(), 150);
+        });
+        // TODO support disableEventListener
+        map.on('moveend', this.updateMapInfoState);
+        map.on('singleclick', (event) => {
+            if (this.props.onClick && !this.map.disabledListeners.singleclick) {
+                const latLng = this.coordinateToLatLng(event.coordinate);
+                if (!latLng) return;
+                const { lat, lng } = latLng;
+                /*
+                 * Handle special case for vector features with handleClickOnLayer=true
+                 * Modifies the clicked point coordinates to center the marker and sets the layerInfo for
+                 * the clickPoint event (used as flag to show or hide marker)
+                 */
+                let markerCoords;
+                let layerInfo;
+                this.markerPresent = false;
+                map.forEachFeatureAtPixel(event.pixel, (feature, layer) => {
+                    if (layer && layer.get('handleClickOnLayer')) {
+                        const geom = feature.getGeometry();
+                        // TODO: We should find out a better way to identify it then checking geometry type
+                        if (!this.markerPresent && geom.getType() === "Point") {
+                            this.markerPresent = true;
+                            layerInfo = layer.get('msId');
+                            const arr = toLonLat(geom.getFirstCoordinate(), this.props.projection);
+                            markerCoords = { x: arr[0], y: arr[1] };
+                        }
+                    }
+                });
+                const finalLat = markerCoords ? markerCoords.y : lat;
+                const finalLng = markerCoords ? normalizeLng(markerCoords.x) : lng;
+                const intersectedFeatures = this.getIntersectedFeatures(map, event?.pixel);
+                const intersectedPixelsPromise = Promise.resolve(this.getIntersectedPixels(map, event?.pixel));
+
+                this.props.onClick({
+                    pixel: {
+                        x: event.pixel[0],
+                        y: event.pixel[1]
+                    },
+                    latlng: {
+                        lat: finalLat,
+                        lng: finalLng,
+                        z: this.getElevation(event.coordinate, event.pixel)
+                    },
+                    rawPos: event.coordinate.slice(),
+                    resolution: map.getView().getResolution(),
+                    modifiers: {
+                        alt: event.originalEvent.altKey,
+                        ctrl: event.originalEvent.ctrlKey,
+                        metaKey: event.originalEvent.metaKey, // MAC OS
+                        shift: event.originalEvent.shiftKey
+                    },
+                    intersectedFeatures,
+                    intersectedPixelsPromise
+                }, layerInfo);
+            }
+        });
+        const mouseMove = throttle(this.mouseMoveEvent, 100);
+        // TODO support disableEventListener
+        map.on('pointermove', mouseMove);
+        this.updateMapInfoState();
+        this.setMousePointer(this.props.mousePointer);
+        // NOTE: this re-call render function after div creation to have the map initialized.
+        this.forceUpdate();
+
+        this.props.onResolutionsChange(this.getResolutions());
+    }
+
+    UNSAFE_componentWillReceiveProps(newProps) {
+        if (newProps.mousePointer !== this.props.mousePointer) {
+            this.setMousePointer(newProps.mousePointer);
+        }
+        if (newProps.zoomControl !== this.props.zoomControl) {
+            if (newProps.zoomControl) {
+                this.map.addControl(new Zoom());
+            } else {
+                this.map.removeControl(this.map.getControls().getArray().filter((ctl) => ctl instanceof Zoom)[0]);
+            }
+        }
+
+        /*
+         * Manage interactions programmatically.
+         * map interactions may change, i.e. becoming enabled or disabled
+         * TODO: with re-generation of mapOptions the application could do this operation
+         * on every render. We should prevent it with something like isEqual if this becomes
+         * a performance problem
+         */
+        if (this.map && (this.props.mapOptions && this.props.mapOptions.interactions) !== (newProps.mapOptions && newProps.mapOptions.interactions)) {
+            const newInteractions = newProps.mapOptions.interactions || {};
+            const mapInteractions = this.map.getInteractions().getArray();
+            Object.keys(newInteractions).forEach(newInteraction => {
+                const {Instance, options} = DEFAULT_INTERACTION_OPTIONS[newInteraction] || {};
+                let interaction = find(mapInteractions, inter => DEFAULT_INTERACTION_OPTIONS[newInteraction] && inter instanceof Instance);
+                if (!interaction) {
+                    /* if the interaction
+                     *   does not exist in the map && now is enabled
+                     * then
+                     *   add it
+                    */
+                    newInteractions[newInteraction] && Instance && this.map.addInteraction(new Instance(options));
+                } else {
+                    // otherwise use existing interaction and enable or disable it based on newProps values
+                    interaction.setActive(newInteractions[newInteraction]);
+                }
+            });
+        }
+
+        if (this.map && this.props.id !== newProps.mapStateSource) {
+            this._updateMapPositionFromNewProps(newProps);
+        }
+
+        if (this.map && newProps.resize !== this.props.resize) {
+            setTimeout(() => {
+                this.map.updateSize();
+            }, 0);
+        }
+
+        if (this.map && ((this.props.projection !== newProps.projection) || this.haveResolutionsChanged(newProps)) || this.haveRotationChanged(newProps) || this.props.limits !== newProps.limits) {
+            if (this.props.projection !== newProps.projection || this.props.limits !== newProps.limits || this.haveRotationChanged(newProps) || (this.haveResolutionsChanged(newProps) || this.props.editScale)) {
+                let mapProjection = newProps.projection;
+                const center = reproject([
+                    newProps.center.x,
+                    newProps.center.y
+                ], 'EPSG:4326', mapProjection);
+                let closestMatchedZoom = newProps.zoom;
+                const projectionChanged = this.props.projection !== newProps.projection;
+                if (projectionChanged) {
+                    const currentProjection = getProjection(this.props.projection);
+                    const nextProjection = getProjection(mapProjection);
+                    const currentResolution = Number.isFinite(this.props.resolution)
+                        ? this.props.resolution
+                        : this.map.getView().getResolution(); // Fall back to map resolution if not provided by props.
+                    const currentMetersPerUnit = currentProjection?.getMetersPerUnit?.() ?? 1;
+                    const nextMetersPerUnit = nextProjection?.getMetersPerUnit?.() ?? 1;
+                    const resolutionInMeters = currentResolution * currentMetersPerUnit;
+                    const newResolutions = getResolutionsForProjection(mapProjection)
+                        .map((resol) => resol * nextMetersPerUnit)
+                        .filter(Number.isFinite);
+                    if (Number.isFinite(resolutionInMeters) && newResolutions.length > 0) {
+                        closestMatchedZoom = newResolutions.reduce((zoom, resol, reIndex) => {
+                            return Math.abs(resol - resolutionInMeters) < Math.abs(newResolutions[zoom] - resolutionInMeters) ? reIndex : zoom;
+                        }, 0);
+                    }
+                }
+                this.map.setView(this.createView(center, closestMatchedZoom, newProps.projection, newProps.mapOptions && newProps.mapOptions.view, newProps.limits, newProps.mapOptions));
+                this.props.onResolutionsChange(this.getResolutions(newProps.projection, newProps.mapOptions));
+            }
+            // We have to force ol to drop tile and reload
+            this.map.getLayers().forEach((l) => {
+                let source = l.getSource();
+                if (source.getTileLoadFunction) {
+                    source.setTileLoadFunction(source.getTileLoadFunction());
+                }
+
+            });
+
+            this.map.render();
+        }
+    }
+
+    componentWillUnmount() {
+        const attributionContainer = this.props.mapOptions.attribution && this.props.mapOptions.attribution.container
+            && this.getDocument().querySelector(this.props.mapOptions.attribution.container);
+        if (attributionContainer && attributionContainer.querySelector('.ol-attribution')) {
+            try {
+                attributionContainer.removeChild(attributionContainer.querySelector('.ol-attribution'));
+            } catch (e) {
+                // do nothing... probably an old configuration
+            }
+
+        }
+        if (this.unsubscribeProjAdapter) {
+            this.unsubscribeProjAdapter();
+            this.unsubscribeProjAdapter = null;
+        }
+        if (this.map) {
+            this.map.setTarget(null);
+        }
+    }
+    getDocument = () => {
+        return this.props.document || document;
+    };
+    /**
+     * Calculates resolutions accordingly with default algorithm in GeoWebCache.
+     * See this: https://github.com/GeoWebCache/geowebcache/blob/5e913193ff50a61ef9dd63a87887189352fa6b21/geowebcache/core/src/main/java/org/geowebcache/grid/GridSetFactory.java#L196
+     * It allows to have the resolutions aligned to the default generated grid sets on server side.
+     * **NOTES**: this solution doesn't support:
+     * - custom grid sets with `alignTopLeft=true` (e.g. GlobalCRS84Pixel). Custom resolutions will need to be configured as `mapOptions.view.resolutions`
+     * - custom grid set with custom extent. You need to customize the projection definition extent to make it work.
+     * - custom grid set is partially supported by mapOptions.view.resolutions but this is not managed by projection change yet
+     * - custom tile sizes
+     */
+    getResolutions = (srs, mapOptions = this.props.mapOptions) => {
+    // Resolve requested projection
+        const requestedProj = srs
+            ? msGetProjection(srs)
+            : (this.map?.getView()?.getProjection());
+        const requestedSRS = normalizeSRS(srs || requestedProj.getCode());
+
+        // Check for explicitly configured resolutions + matching projection
+        const viewOptions = mapOptions?.view || {};
+        const configuredResolutions = viewOptions.resolutions;
+        const configuredResProjection = viewOptions.projection && normalizeSRS(viewOptions.projection);
+
+        // If resolutions are explicitly configured *and* tied to a projection that matches our target,
+        // return them directly — avoids recomputation and ensures consistency with custom tile sources.
+        if (
+            configuredResolutions &&
+        Array.isArray(configuredResolutions) &&
+        (!configuredResProjection || requestedSRS === configuredResProjection)
+        ) {
+            return configuredResolutions;
+        }
+        // Otherwise compute dynamically
+        const extent = requestedProj.extent || requestedProj.getExtent();
+        return getResolutionsForProjection(
+            srs ?? this.map.getView().getProjection().getCode(),
+            {
+                minResolution: mapOptions.minResolution,
+                maxResolution: mapOptions.maxResolution,
+                minZoom: mapOptions.minZoom,
+                maxZoom: mapOptions.maxZoom,
+                zoomFactor: mapOptions.zoomFactor,
+                extent
+            }
+        );
+    };
+
+    /**
+     *
+     * @param {zoom} map
+     * @param {x, y, longitude, latitude} position
+     * @returns Array of layers with relative intersected pixels
+     */
+    getIntersectedPixels = (map, position) => {
+
+        const allLayers = map.getLayers().getArray();
+
+        const tiffLayers = allLayers.filter(layer =>
+            layer.rendered &&
+            layer.getSource() instanceof GeoTIFF
+        );
+
+        const result = tiffLayers.map(layer => {
+            const rawdata = layer.getData(position);
+            if (!rawdata) return null;
+            const data =  Array.from(rawdata);
+            // const source = layer.getSource();
+            return {
+                id: layer.get('msId'),
+                // remap bands index start from 1 instead of 0 to be consistent with 2D pick and avoid confusion with users
+                bands: data.reduce((acc, value, index) => ({ ...acc, [index + 1]: value }), {})
+            };
+        }).filter(val => val !== null);
+        return result;
+    }
+    /*
+     * Compute the OLGeometry from a RenderedGeometry
+     * @param geomLike
+     * @returns {Point|MultiPoint|null|MultiLineString|LineString|*|Polygon|MultiPolygon}
+     */
+    renderGeometryToOLGeometry = (geomLike) => {
+        if (!geomLike) return null;
+        // If it is a OLGeom, we return it as it is
+        if (typeof geomLike.clone === 'function') {
+            return geomLike;
+        }
+        const type = geomLike.getType?.();
+        const coords = geomLike.getFlatCoordinates?.();
+        if (!type || !coords) return null;
+
+        switch (type) {
+        case 'Point': return new Point(coords);
+        case 'MultiPoint': return new MultiPoint([coords]);
+        case 'LineString': return new LineString(coords);
+        case 'MultiLineString': return new MultiLineString([coords]);
+        case 'Polygon': return new Polygon(coords);
+        case 'MultiPolygon': return new MultiPolygon([coords]);
+        default: return null; // types not supported
+        }
+    };
+
+    getIntersectedFeatures = (map, pixel) => {
+        let groupIntersectedFeatures = {};
+        map.forEachFeatureAtPixel(pixel, (feature, layer) => {
+            if (layer?.get('msId')) {
+                let olFeature = feature;
+                // Transform RenderFeature to an olFeature
+                // It is necessary to compute intersected features
+                // The MVT features are of type RenderFeature
+                if (feature instanceof RenderFeature) {
+                    const geometry = this.renderGeometryToOLGeometry(feature.getGeometry());
+                    // If null, not supported cause we can't compute intersects
+                    if (!geometry) return null;
+                    olFeature = new Feature(geometry);
+                    olFeature.setProperties(feature.getProperties());
+                }
+
+                const geoJSONFeature = geoJSONFormat.writeFeatureObject(olFeature, {
+                    featureProjection: this.props.projection,
+                    dataProjection: 'EPSG:4326'
+                });
+                groupIntersectedFeatures[layer.get('msId')] = groupIntersectedFeatures[layer.get('msId')]
+                    ? [ ...groupIntersectedFeatures[layer.get('msId')], geoJSONFeature ]
+                    : [ geoJSONFeature ];
+            }
+            return null;
+        });
+        const intersectedFeatures = Object.keys(groupIntersectedFeatures).map(id => ({ id, features: groupIntersectedFeatures[id] }));
+        return intersectedFeatures;
+    };
+    getElevation(pos, pixel) {
+        const elevationLayers = this.map.get('msElevationLayers') || [];
+        return elevationLayers?.[0]?.get('getElevation')
+            ? elevationLayers[0].get('getElevation')(pos, pixel)
+            : undefined;
+    }
+    render() {
+        const map = this.map;
+        const children = map ? React.Children.map(this.props.children, child => {
+            return child ? React.cloneElement(child, {
+                map: map,
+                mapId: this.props.id,
+                onLayerLoading: this.props.onLayerLoading,
+                onLayerError: this.props.onLayerError,
+                onLayerLoad: this.props.onLayerLoad,
+                projection: this.props.projection,
+                onCreationError: this.props.onCreationError,
+                resolutions: this.getResolutions()
+            }) : null;
+        }) : null;
+
+        return (
+            <div id={this.props.id} style={this.props.style}>
+                {children}
+            </div>
+        );
+    }
+
+    coordinateToLatLng = (coordinate) => {
+        const [rawX, rawY] = coordinate;
+        if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
+            return null;
+        }
+        const projection = this.props.projection;
+        const isWebMercator = projection === 'EPSG:900913' || projection === 'EPSG:3857';
+        const pos = isWebMercator
+            ? toLonLat([rawX, rawY], projection)
+            : projection === 'EPSG:4326'
+                ? [normalizeLng(rawX), rawY]
+                : [rawX, rawY];
+        const coords = isWebMercator
+            ? { x: pos[0], y: pos[1] }
+            : reproject(pos, projection, 'EPSG:4326');
+        if (!coords || !Number.isFinite(coords.x) || !Number.isFinite(coords.y)) {
+            return null;
+        }
+        return { pos, lat: coords.y, lng: normalizeLng(coords.x) };
+    };
+
+    mouseMoveEvent = (event) => {
+        if (!event.dragging && event.coordinate) {
+            const latLng = this.coordinateToLatLng(event.coordinate);
+            if (!latLng) return;
+            const { lat, lng } = latLng;
+            const intersectedFeatures = this.getIntersectedFeatures(this.map, event?.pixel);
+            const intersectedPixels = this.getIntersectedPixels(this.map, event?.pixel);
+            // the elevation lookup works with the native map coordinate,
+            // the tile grid of the elevation layer is expressed in map projection units
+            const elevation = this.getElevation(event.coordinate, event.pixel);
+            this.props.onMouseMove({
+                y: lat || 0.0,
+                x: lng || 0.0,
+                z: elevation,
+                crs: "EPSG:4326",
+                pixel: {
+                    x: event.pixel[0],
+                    y: event.pixel[1]
+                },
+                latlng: {
+                    lat,
+                    lng,
+                    z: elevation
+                },
+                lat,
+                lng,
+                rawPos: event.coordinate.slice(),
+                intersectedFeatures,
+                intersectedPixels
+            });
+        }
+    };
+
+    updateMapInfoState = () => {
+        const view = this.map.getView();
+        const crs = view.getProjection().getCode();
+        const mapSize = this.map.getSize();
+        const c = this.normalizeCenter(view.getCenter());
+        const bbox = view.calculateExtent(mapSize);
+        const bboxIsValid = bbox?.length === 4
+            && bbox.every(Number.isFinite)
+            && bbox[0] < bbox[2]
+            && bbox[1] < bbox[3];
+        if (bboxIsValid) {
+            const size = {
+                width: mapSize[0],
+                height: mapSize[1]
+            };
+            this.props.onMapViewChanges(
+                {
+                    x: c[0] || 0.0, y: c[1] || 0.0,
+                    crs: 'EPSG:4326'
+                },
+                view.getZoom(),
+                {
+                    bounds: {
+                        minx: bbox[0],
+                        miny: bbox[1],
+                        maxx: bbox[2],
+                        maxy: bbox[3]
+                    },
+                    crs,
+                    rotation: view.getRotation()
+                },
+                size,
+                this.props.id,
+                this.props.projection,
+                undefined, // viewerOptions,
+                view.getResolution() // resolution
+            );
+        }
+    };
+
+    haveResolutionsChanged = (newProps) => {
+        const resolutions = this.props.mapOptions && this.props.mapOptions.view ? this.props.mapOptions.view.resolutions : undefined;
+        const newResolutions = newProps.mapOptions && newProps.mapOptions.view ? newProps.mapOptions.view.resolutions : undefined;
+        return !isEqual(resolutions, newResolutions);
+    };
+
+    haveRotationChanged = (newProps) => {
+        const rotation = this.props.mapOptions && this.props.mapOptions.view ? this.props.mapOptions.view.rotation : undefined;
+        const newRotation = newProps.mapOptions && newProps.mapOptions.view ? newProps.mapOptions.view.rotation : undefined;
+        return !isEqual(rotation, newRotation);
+    };
+
+    createView = (center, zoom, projection, options, limits = {}, mapOptions) => {
+        const srs = normalizeSRS(projection);
+        // limit has a crs defined
+        const extent = limits.restrictedExtent && limits.crs && reprojectBbox(limits.restrictedExtent, limits.crs, normalizeSRS(projection));
+
+        // Determine whether to use configured resolutions
+        const configuredResolutions = options?.resolutions;
+        const configuredProj = normalizeSRS(options?.projection);
+
+        let resolutionsToUse;
+        if (configuredResolutions && (!configuredProj || configuredProj === srs)) {
+            // use provided resolutions (keep backward compatibility)
+            resolutionsToUse = configuredResolutions;
+        } else {
+            // compute resolutions dynamically (e.g., EPSG:4326)
+            resolutionsToUse = this.getResolutions(srs, mapOptions ? { ...mapOptions, view: options } : undefined);
+        }
+        const newOptions = {
+            ...options,
+            projection: srs,
+            resolutions: resolutionsToUse,
+            extent: options?.extent !== undefined ? options.extent : extent
+        };
+        /*
+        * setting the zoom level in the localConfig file is co-related to the projection extent(size)
+        * it is recommended to use projections with the same coverage area (extent). If you want to have the same restricted zoom level (minZoom)
+        */
+        const viewOptions = Object.assign({}, {
+            projection: srs,
+            center: [center?.x || 0, center?.y || 0],
+            zoom: zoom,
+            minZoom: limits.minZoom,
+            // allow to zoom to level 0 and see world wrapping
+            multiWorld: true,
+            // does not allow intermediary zoom levels
+            // we need this at true to set correctly the scale box
+            constrainResolution: true,
+            resolutions: this.getResolutions(srs, mapOptions ? { ...mapOptions, view: options } : undefined)
+        }, newOptions || {});
+        return new View(viewOptions);
+    };
+
+    _updateMapPositionFromNewProps = (newProps) => {
+        var view = this.map.getView();
+        const currentCenter = this.props.center;
+        const centerIsUpdated = isNearlyEqual(newProps.center.y, currentCenter.y, 8) &&
+            isNearlyEqual(newProps.center.x, currentCenter.x, 8);
+
+        if (!centerIsUpdated) {
+            let center = reproject({ x: newProps.center.x, y: newProps.center.y }, 'EPSG:4326', newProps.projection, true);
+            if (center) {
+                view.setCenter([center.x, center.y]);
+            }
+        }
+        if (this.props.editScale) {
+            // this is for map print only
+            if (newProps.mapResolution !== this.props.mapResolution) {
+                view.setResolution(newProps.mapResolution);
+            }
+        } else if (Math.round(newProps.zoom) !== this.props.zoom) {
+            view.setZoom(Math.round(newProps.zoom));
+        }
+        if (newProps.bbox && newProps.bbox.rotation !== undefined || this.bbox && this.bbox.rotation !== undefined && newProps.bbox.rotation !== this.props.bbox.rotation) {
+            view.setRotation(newProps.bbox.rotation);
+        }
+    };
+
+    normalizeCenter = (center) => {
+        let c = reproject({ x: center[0], y: center[1] }, this.props.projection, 'EPSG:4326', true);
+        return [c?.x || 0, c?.y || 0];
+    };
+
+    setMousePointer = (pointer) => {
+        if (this.map) {
+            const mapDiv = this.map.getViewport();
+            mapDiv.style.cursor = pointer || 'auto';
+        }
+    };
+
+    zoomToExtentHandler = (extent, { padding, crs = 'EPSG:4326', maxZoom: zoomLevel, duration, nearest } = {}) => {
+        const projected = reprojectBbox(extent, crs, this.props.projection);
+        // TODO: improve this to manage all degenerated bounding boxes.
+        const isWorldExtent = projected && projected[0] === projected[2] && projected[1] === projected[3]
+            && crs === "EPSG:4326" && isArray(extent) && extent[0] === -180 && extent[1] === -90;
+        const rawBounds = isWorldExtent ? this.map.getView().getProjection().getExtent() : projected;
+        // Normalize axis order: some projections (e.g. polar stereographic) invert Y,
+        // causing reprojectBbox to return miny > maxy. OL rejects such extents as empty.
+        const bounds = rawBounds ? [
+            Math.min(rawBounds[0], rawBounds[2]),
+            Math.min(rawBounds[1], rawBounds[3]),
+            Math.max(rawBounds[0], rawBounds[2]),
+            Math.max(rawBounds[1], rawBounds[3])
+        ] : rawBounds;
+        if (!bounds || !bounds.every(Number.isFinite)) {
+            return;
+        }
+        const isDegenerate = bounds[0] === bounds[2] && bounds[1] === bounds[3];
+        // TODO: allow maxZoom to be customizable
+        const maxZoom = isDegenerate && isNil(zoomLevel) ? 21 : zoomLevel;
+        this.map.getView().fit(bounds, {
+            size: this.map.getSize(),
+            // mapPaddingSelector returns null while the layout epic is mid-computation
+            // (e.g. during a setView swap on projection change). Pass undefined in that
+            // case so OL applies its own [0,0,0,0] default - passing null reaches
+            // View.fitInternal where padding[1] dereferences and throws.
+            ...(padding ? { padding: [padding.top || 0, padding.right || 0, padding.bottom || 0, padding.left || 0] } : {}),
+            maxZoom,
+            duration,
+            nearest
+        });
+    }
+
+    registerHooks = () => {
+        this.props.hookRegister.registerHook(mapUtils.RESOLUTIONS_HOOK, (srs) => {
+            return this.getResolutions(srs);
+        });
+        this.props.hookRegister.registerHook(mapUtils.RESOLUTION_HOOK, () => {
+            return this.map.getView().getResolution();
+        });
+        this.props.hookRegister.registerHook(mapUtils.COMPUTE_BBOX_HOOK, (center, zoom) => {
+            var olCenter = reproject([center.x, center.y], 'EPSG:4326', this.props.projection);
+            let view = this.createView(olCenter, zoom, this.props.projection, this.props.mapOptions && this.props.mapOptions.view, this.props.limits);
+            let size = this.map.getSize();
+            let bbox = view.calculateExtent(size);
+            return {
+                bounds: {
+                    minx: bbox[0],
+                    miny: bbox[1],
+                    maxx: bbox[2],
+                    maxy: bbox[3]
+                },
+                crs: this.props.projection,
+                rotation: this.map.getView().getRotation()
+            };
+        });
+        this.props.hookRegister.registerHook(mapUtils.GET_PIXEL_FROM_COORDINATES_HOOK, (pos) => {
+            return this.map.getPixelFromCoordinate(pos);
+        });
+        this.props.hookRegister.registerHook(mapUtils.GET_COORDINATES_FROM_PIXEL_HOOK, (pixel) => {
+            return this.map.getCoordinateFromPixel(pixel);
+        });
+        this.props.hookRegister.registerHook(mapUtils.ZOOM_TO_EXTENT_HOOK, this.zoomToExtentHandler);
+    };
+}
+
+export default withBatchedLayerLoading(OpenlayersMap);

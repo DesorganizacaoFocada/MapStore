@@ -1,0 +1,94 @@
+/**
+ * Copyright 2015, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import Layers from '../../../../utils/openlayers/Layers';
+import isEqual from 'lodash/isEqual';
+import get from 'lodash/get';
+
+import GeoTIFF from 'ol/source/GeoTIFF.js';
+import TileLayer from 'ol/layer/WebGLTile.js';
+import { isProjectionAvailable } from '../../../../utils/ProjectionUtils';
+import { getRequestConfigurationByUrl } from '../../../../utils/SecurityUtils';
+import { updateUrlParams } from '../../../../utils/URLUtils';
+import { isGlobalCOG } from '../../../../utils/cog/LayerUtils';
+
+function getSource(options) {
+    let sources = [];
+    let sourceOptions = {};
+    if (options.sources && options.sources.length > 0) {
+        const firstSource = options.sources[0];
+        const {headers, params} = getRequestConfigurationByUrl(firstSource.url, null, options.security?.sourceId);
+        if (headers) {
+            sourceOptions.headers = headers;
+        }
+        sources = options.sources.map((source) => {
+            return {
+                ...source,
+                url: updateUrlParams(source.url, params)
+            };
+        });
+    }
+    return new GeoTIFF({
+        convertToRGB: 'auto', // CMYK, YCbCr, CIELab, and ICCLab images will automatically be converted to RGB
+        sourceOptions,
+        sources,
+        wrapX: isGlobalCOG(options?.sourceMetadata) // enable wrapX only in case of global coverage COGs to avoid #13064
+    });
+}
+
+function create(options) {
+    // GeoTIFF sources fetch eagerly on creation (unlike WMS, which loads on demand),
+    // so `visible: false` won't prevent requests. Skip creating hidden layers;
+    // `update` recreates them when they become visible.
+    if (options.visibility === false) {
+        return null;
+    }
+    const layerOl = new TileLayer({
+        msId: options.id,
+        style: get(options, 'style.body'),
+        opacity: options.opacity !== undefined ? options.opacity : 1,
+        visible: true,
+        source: getSource(options),
+        enablePickFeatures: true,
+        zIndex: options.zIndex,
+        minResolution: options.minResolution,
+        maxResolution: options.maxResolution
+    });
+
+    return layerOl;
+}
+
+Layers.registerType('cog', {
+    create,
+    update(layer, newOptions, oldOptions, map) {
+        if (!layer && newOptions.visibility !== false) {
+            return create(newOptions, map);
+        }
+        if (!layer) {
+            return null;
+        }
+        if (newOptions.srs !== oldOptions.srs
+            || !isEqual(newOptions.style, oldOptions.style)
+            || !isEqual(newOptions.security, oldOptions.security)
+            || !isEqual(newOptions.sources, oldOptions.sources) // min/max source data value can change
+            || !isEqual(oldOptions.requestRuleRefreshHash, newOptions.requestRuleRefreshHash)
+        ) {
+            return create(newOptions, map);
+        }
+        if (oldOptions.minResolution !== newOptions.minResolution) {
+            layer.setMinResolution(newOptions.minResolution === undefined ? 0 : newOptions.minResolution);
+        }
+        if (oldOptions.maxResolution !== newOptions.maxResolution) {
+            layer.setMaxResolution(newOptions.maxResolution === undefined ? Infinity : newOptions.maxResolution);
+        }
+        return null;
+    },
+    isCompatible: (layer) => {
+        return isProjectionAvailable(layer?.sourceMetadata?.crs);
+    }
+});

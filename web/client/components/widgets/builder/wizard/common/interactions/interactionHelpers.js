@@ -1,0 +1,264 @@
+/*
+ * Copyright 2025, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import { v1 as uuid } from 'uuid';
+import { CONFIGURATION_METADATA, CONFIGURATION_RENDER_MODES, DEFAULT_CONFIGURATION } from './interactionConstants';
+import {
+    isChartAxisDimensionTarget,
+    isLayerDimensionTarget,
+    isLayerTimeDimensionTarget,
+    isMapTimeTarget,
+    findAllApplyFiltersForZoomTo,
+    TARGET_TYPES
+} from '../../../../../../utils/InteractionUtils';
+
+const DEFAULT_NODE_DISABLED = {
+    disabled: false,
+    reasonMsgId: null
+};
+
+/**
+ * Checks if a condition is met for the given context
+ * @param {object} condition - The condition to check
+ * @param {object} context - The context to check against
+ * @returns {boolean} True if the condition is met, false otherwise
+ */
+export const matchesCondition = (condition = {}, context = {}) => {
+    return Object.keys(condition).every((field) => {
+        const rule = condition[field];
+        const value = context[field];
+
+        if (rule?.isEqual !== undefined) {
+            return value === rule.isEqual;
+        }
+
+        if (rule?.isNotEqual !== undefined) {
+            return value !== rule.isNotEqual;
+        }
+
+        return value === rule;
+    });
+};
+
+/**
+ * Checks if a configuration is visible for the given context
+ * @param {object} metadata - The configuration metadata
+ * @param {object} context - The context to check against
+ * @returns {boolean} True if the configuration is visible, false otherwise
+ */
+export const isConfigurationVisible = (metadata, context) => {
+    if (!metadata) {
+        return false;
+    }
+    if (!metadata.visibleWhen) {
+        return true;
+    }
+    return matchesCondition(metadata.visibleWhen, context);
+};
+
+/**
+ * Checks if a configuration is disabled for the given context
+ * @param {object} metadata - The configuration metadata
+ * @param {object} context - The context to check against
+ * @returns {boolean} True if the configuration is disabled, false otherwise
+ */
+export const isConfigurationDisabled = (metadata, context) => {
+    if (!metadata?.disabledWhen) {
+        return false;
+    }
+    return matchesCondition(metadata.disabledWhen, context);
+};
+
+/**
+ * Returns the configuration keys that are visible for the given context and render mode.
+ * @param {object} configuration - The configuration object
+ * @param {object} context - The context object
+ * @param {string} renderAs - The render mode
+ * @returns {string[]} Array of visible configuration keys
+ */
+export const getVisibleConfigurationKeys = (
+    configuration = {},
+    context = {},
+    renderAs = CONFIGURATION_RENDER_MODES.PANEL_CHECKBOX
+) =>
+    Object.keys(configuration).filter((key) =>
+        isConfigurationVisible(CONFIGURATION_METADATA[key], context)
+        && (CONFIGURATION_METADATA[key]?.renderAs ?? CONFIGURATION_RENDER_MODES.PANEL_CHECKBOX) === renderAs);
+
+
+/**
+ * Helper: Build interaction object from item, event, and target metadata
+ * @param {object} params - The parameters object
+ * @param {string} params.sourceNodePath - The source node path
+ * @param {string} params.targetNodePath - The target node path
+ * @param {object} params.configuration - Optional configuration object
+ * @param {boolean} params.plugged - Whether the interaction is plugged (default: false)
+ * @param {string} params.existingId - Optional existing interaction ID to preserve
+ * @returns {object} The interaction object
+ */
+export function buildInteractionObject({ sourceNodePath, targetNodePath, configuration = null, plugged = false, existingId = null, targetMetaData, targetType}) {
+    return {
+        id: existingId || uuid(),
+        source: {
+            nodePath: sourceNodePath
+        },
+        target: {
+            nodePath: targetNodePath,
+            metaData: targetMetaData
+        },
+        configuration: configuration || DEFAULT_CONFIGURATION,
+        plugged: plugged,
+        targetType: targetType
+    };
+}
+
+/**
+ * Helper: Check if an interaction matches the given source, target, and target node path
+ * @param {object} interaction - The interaction to check
+ * @param {string} sourceNodePath - The source node path
+ * @param {object} target - The target object
+ * @param {string} targetNodePath - The target node path
+ * @returns {boolean} True if the interaction matches, false otherwise
+ */
+export function matchesInteraction(interaction, sourceNodePath, targetNodePath, targetType) {
+    return interaction.source.nodePath === sourceNodePath &&
+        interaction.target.nodePath === targetNodePath && targetType === interaction.targetType;
+}
+
+export function findInteraction(interactions = [], sourceNodePath, targetNodePath, targetType) {
+    return interactions.find(interaction =>
+        matchesInteraction(interaction, sourceNodePath, targetNodePath, targetType)
+    );
+}
+
+export const getInteractionTargetNodeDisabled = ({
+    item,
+    target,
+    targetNodePath,
+    sourceNodePath,
+    plugged,
+    alreadyExistingInteractions = [],
+    sourceSelectionMode,
+    timelineEnabled = false
+}) => {
+    if (item?.type !== 'element') {
+        return DEFAULT_NODE_DISABLED;
+    }
+
+    const styleAlreadyConnected = alreadyExistingInteractions
+        .filter(i => i?.source?.nodePath !== sourceNodePath)
+        .some(i =>
+            i.targetType === TARGET_TYPES.APPLY_STYLE
+            && target.targetType === TARGET_TYPES.APPLY_STYLE
+            && i?.target?.nodePath === targetNodePath
+            && i.plugged
+        );
+
+    if (styleAlreadyConnected) {
+        return {
+            disabled: true,
+            reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToAnotherFilterTooltip'
+        };
+    }
+
+    if (target.targetType === TARGET_TYPES.APPLY_DIMENSION) {
+        const chartAxisCurrentTimeDisabledByTimeline = timelineEnabled && isChartAxisDimensionTarget(targetNodePath);
+
+        if (chartAxisCurrentTimeDisabledByTimeline) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.axisCurrentTimeControlledByTimelineTooltip'
+            };
+        }
+
+        const chartAxisCurrentTimeTarget = isChartAxisDimensionTarget(targetNodePath);
+        const chartAxisDimensionTargetMetadata = item?.interactionMetadata?.targets
+            ?.find(t => t?.targetType === TARGET_TYPES.APPLY_DIMENSION)
+            || {};
+        const chartAxisCurrentTimeEnabled = chartAxisDimensionTargetMetadata?.showCurrentTimeEnabled === true;
+        const chartAxisDateType = chartAxisDimensionTargetMetadata?.dateType === true;
+
+        if (chartAxisCurrentTimeTarget && (!chartAxisCurrentTimeEnabled || !chartAxisDateType)) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.axisCurrentTimeDisabledTooltip'
+            };
+        }
+
+        const layerTimeDisabledByTimeline = timelineEnabled && isLayerTimeDimensionTarget(targetNodePath);
+
+        if (layerTimeDisabledByTimeline) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.layerTimeControlledByTimelineTooltip'
+            };
+        }
+
+        if (!timelineEnabled && isMapTimeTarget(targetNodePath)) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.timelineTargetUnavailableTooltip'
+            };
+        }
+
+        const layerDimensionAlreadyConnected = isLayerDimensionTarget(targetNodePath)
+            && alreadyExistingInteractions
+                .filter(i => i?.source?.nodePath !== sourceNodePath)
+                .some(i =>
+                    i.targetType === TARGET_TYPES.APPLY_DIMENSION
+                    && i?.target?.nodePath === targetNodePath
+                    && i.plugged
+                );
+
+        if (layerDimensionAlreadyConnected) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToAnotherFilterTooltip'
+            };
+        }
+
+        if (sourceSelectionMode === 'multiple' && !plugged) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.applyDimensionMultipleSelectionDisabledTooltip'
+            };
+        }
+    }
+
+    if (target.targetType === TARGET_TYPES.APPLY_ZOOM_TO) {
+        const zoomInteraction = {
+            source: { nodePath: sourceNodePath },
+            target: { nodePath: targetNodePath }
+        };
+        const zoomDependencies = findAllApplyFiltersForZoomTo(zoomInteraction, alreadyExistingInteractions);
+        if (zoomDependencies.length === 0) {
+            return {
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.zoomToRequiresApplyFilterTooltip'
+            };
+        }
+    }
+
+    const sourceConnections = alreadyExistingInteractions.filter(i =>
+        i?.source?.nodePath === sourceNodePath
+    );
+    const hasTwoWayMapTimeConnection = sourceConnections.some(i =>
+        isMapTimeTarget(i?.target?.nodePath)
+        && i?.configuration?.twoWaySynchronization === true
+    );
+    const currentItemIsMapTime = isMapTimeTarget(targetNodePath);
+    const mapTimeLockConflict = hasTwoWayMapTimeConnection && !currentItemIsMapTime;
+
+    if (mapTimeLockConflict) {
+        return {
+            disabled: true,
+            reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToTimeTooltip'
+        };
+    }
+
+    return DEFAULT_NODE_DISABLED;
+};

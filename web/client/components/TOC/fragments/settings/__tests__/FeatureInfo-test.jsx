@@ -1,0 +1,316 @@
+/*
+ * Copyright 2018, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import expect from 'expect';
+import React from 'react';
+import ReactDOM from 'react-dom';
+import TestUtils from 'react-dom/test-utils';
+import { DragDropContext as dragDropContext } from 'react-dnd';
+import testBackend from 'react-dnd-test-backend';
+
+import {getAvailableInfoFormat} from '../../../../../utils/MapInfoUtils';
+import FeatureInfo from '../FeatureInfo';
+import axios from '../../../../../libs/ajax';
+import MockAdapter from 'axios-mock-adapter';
+
+let mockAxios;
+
+const defaultInfoFormat = getAvailableInfoFormat();
+const DndFeatureInfo = dragDropContext(testBackend)(FeatureInfo);
+const getFeatureInfoInstance = (props = {}) => TestUtils.findRenderedComponentWithType(
+    ReactDOM.render(<DndFeatureInfo {...props}/>, document.getElementById("container")),
+    FeatureInfo
+);
+
+
+const formatCards = {
+    TEXT: {
+        titleId: 'layerProperties.textFormatTitle',
+        glyph: 'ext-txt'
+    },
+    HTML: {
+        titleId: 'layerProperties.htmlFormatTitle',
+        glyph: 'ext-html'
+    },
+    PROPERTIES: {
+        titleId: 'layerProperties.propertiesFormatTitle',
+        glyph: 'ext-json'
+    },
+    TEMPLATE: {
+        titleId: 'layerProperties.templateFormatTitle',
+        glyph: 'ext-empty'
+    },
+    EXTERNAL_DATA: {
+        titleId: 'layerProperties.externalData.title',
+        glyph: 'ext-json'
+    }
+};
+
+describe("test FeatureInfo", () => {
+    beforeEach((done) => {
+        document.body.innerHTML = '<div id="container"></div>';
+        mockAxios = new MockAdapter(axios);
+        setTimeout(done);
+    });
+
+    afterEach((done) => {
+        ReactDOM.unmountComponentAtNode(document.getElementById("container"));
+        document.body.innerHTML = '';
+        mockAxios.restore();
+        setTimeout(done);
+    });
+
+    it('test rendering', () => {
+        getFeatureInfoInstance({
+            element: {
+                featureInfo: {
+                    views: [{ id: 'text-view', title: 'Text identify', type: 'TEXT' }]
+                }
+            },
+            formatCards,
+            defaultInfoFormat
+        });
+        const views = document.querySelectorAll('[data-id^="feature-info-view-"]');
+        expect(views.length).toBe(1);
+        expect(views[0].querySelector('.ms-feature-info-view-title')).toExist();
+        const modalEditor = document.getElementsByClassName('ms-resizable-modal');
+        expect(modalEditor.length).toBe(0);
+
+    });
+
+    it('should not configure any view when the layer has no featureInfo', () => {
+        getFeatureInfoInstance({formatCards, defaultInfoFormat});
+        expect(document.querySelectorAll('[data-id^="feature-info-view-"]').length).toBe(0);
+        expect(document.querySelector('.ms-feature-info-views-empty')).toExist();
+    });
+
+    it('should allow to remove the last view to fall back on the map settings format', done => {
+        const component = getFeatureInfoInstance({
+            element: {
+                featureInfo: {
+                    views: [{ id: 'text-view', title: 'Text identify', type: 'TEXT' }]
+                }
+            },
+            onChange: (key, value) => {
+                expect(key).toBe('featureInfo');
+                expect(value.views).toEqual([]);
+                done();
+            },
+            formatCards,
+            defaultInfoFormat
+        });
+        const removeButton = document.querySelector('.ms-feature-info-view-remove');
+        expect(removeButton.disabled).toBe(false);
+        component.removeView('text-view');
+    });
+
+    it('should display configured views as disabled when identify is disabled', () => {
+        getFeatureInfoInstance({
+            element: {
+                featureInfo: {
+                    disabled: true,
+                    views: [
+                        { id: 'text-view', title: 'Text identify', type: 'TEXT' },
+                        { id: 'properties-view', title: 'Properties identify', type: 'PROPERTIES' }
+                    ]
+                }
+            },
+            formatCards,
+            defaultInfoFormat
+        });
+
+        const views = document.querySelectorAll('[data-id^="feature-info-view-"]');
+        expect(views.length).toBe(2);
+        expect(views[0].classList.contains('disabled')).toBe(true);
+        expect(views[0].querySelector('.ms-feature-info-view-title').disabled).toBe(true);
+        expect(views[0].querySelector('.Select').classList.contains('is-disabled')).toBe(true);
+        expect([...views[0].querySelectorAll('button')].every((button) => button.disabled)).toBe(true);
+        expect(document.querySelector('.btn-primary').disabled).toBe(true);
+    });
+
+    it('updates the featureInfo view configuration', done => {
+        const component = getFeatureInfoInstance({
+            element: {
+                featureInfo: {
+                    views: [{ id: 'text-view', title: 'Text identify', type: 'TEXT' }]
+                }
+            },
+            onChange: (key, value) => {
+                expect(key).toBe('featureInfo');
+                expect(value.disabled).toBe(true);
+                expect(value.views.length).toBe(1);
+                done();
+            },
+            formatCards,
+            defaultInfoFormat
+        });
+        component.updateFeatureInfo(true, component.getViews());
+    });
+    it('drops the legacy format, template and viewer when saving views', done => {
+        const component = getFeatureInfoInstance({
+            element: {
+                featureInfo: {
+                    format: 'TEMPLATE',
+                    template: '<p>${properties.NAME}</p>',
+                    viewer: { type: 'customViewer' },
+                    featureInfoRegex: '<div[^>]*>'
+                }
+            },
+            onChange: (key, value) => {
+                expect(key).toBe('featureInfo');
+                expect(value.format).toNotExist();
+                expect(value.template).toNotExist();
+                expect(value.viewer).toNotExist();
+                expect(value.featureInfoRegex).toBe('<div[^>]*>');
+                expect(value.views.length).toBe(1);
+                done();
+            },
+            formatCards,
+            defaultInfoFormat
+        });
+        component.updateFeatureInfo(false, component.getViews());
+    });
+    it('test rendering with supported infoFormats from layer props', () => {
+        const component = getFeatureInfoInstance({element: {infoFormats: ["text/html", "text/plain"]}, formatCards, defaultInfoFormat});
+        expect(component.getTypeOptions()).toEqual(['TEXT', 'HTML']);
+    });
+    it('test rendering supported infoFormats for wfs layer', () => {
+        const component = getFeatureInfoInstance({element: {type: "wfs"}, formatCards, defaultInfoFormat});
+        expect(component.getTypeOptions()).toEqual(['PROPERTIES', 'TEMPLATE', 'EXTERNAL_DATA']);
+    });
+
+    it('test rendering supported infoFormats for wfs layer with only application/json', () => {
+        const component = getFeatureInfoInstance({element: {type: "wfs", infoFormats: ["application/json"]}, formatCards, defaultInfoFormat});
+        expect(component.getTypeOptions()).toEqual(['PROPERTIES', 'TEMPLATE', 'EXTERNAL_DATA']);
+    });
+
+    it('test rendering supported infoFormats for wfs layer with application/json and text/html', () => {
+        const component = getFeatureInfoInstance({element: {type: "wfs", infoFormats: ["application/json", "text/html"]}, formatCards, defaultInfoFormat});
+        expect(component.getTypeOptions()).toEqual(['HTML', 'PROPERTIES', 'TEMPLATE', 'EXTERNAL_DATA']);
+    });
+
+    it('test rendering supported infoFormats for wms layer', () => {
+        const component = getFeatureInfoInstance({element: {type: "wms"}, formatCards, defaultInfoFormat});
+        expect(component.getTypeOptions()).toEqual(['TEXT', 'HTML', 'PROPERTIES', 'TEMPLATE', 'EXTERNAL_DATA']);
+    });
+
+    it('marks invalid EXTERNAL_DATA and toggles its inline editor', () => {
+        ReactDOM.render(<DndFeatureInfo
+            element={{
+                type: 'wfs',
+                featureInfo: {
+                    views: [{ id: 'external', title: 'External', type: 'EXTERNAL_DATA' }]
+                }
+            }}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat}/>, document.getElementById('container'));
+
+        const view = document.querySelector('[data-id="feature-info-view-external"]');
+        expect(view.classList.contains('has-error')).toBe(true);
+        const editButton = view.querySelector('.ms-feature-info-view-edit');
+        TestUtils.Simulate.click(editButton);
+        expect(document.querySelector('.ms-external-data-editor')).toExist();
+        TestUtils.Simulate.click(editButton);
+        expect(document.querySelector('.ms-external-data-editor')).toNotExist();
+    });
+
+    it('test WMS feature info request options preserve existing feature info configuration', done => {
+        ReactDOM.render(<DndFeatureInfo
+            element={{
+                type: "wms",
+                serverType: "geoserver",
+                featureInfo: {
+                    format: "TEXT",
+                    template: "<p>${properties.name}</p>"
+                }
+            }}
+            onChange={(key, value) => {
+                try {
+                    expect(key).toBe('featureInfo');
+                    expect(value).toEqual({
+                        format: "TEXT",
+                        template: "<p>${properties.name}</p>",
+                        maxItems: 25
+                    });
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat} />, document.getElementById("container"));
+        expect(document.querySelector('[data-qa="feature-info-buffer"]')).toBeTruthy();
+        expect(document.querySelector('[data-qa="feature-info-buffer"]').max).toBe('1000');
+        expect(document.querySelector('[data-qa="feature-info-max-items"]').value).toBe('10');
+        TestUtils.Simulate.change(document.querySelector('[data-qa="feature-info-max-items"]'), {target: {value: "25"}});
+    });
+
+    it('test WMS feature info buffer option is hidden when server type is No Vendor', () => {
+        ReactDOM.render(<FeatureInfo
+            element={{type: "wms", serverType: "no-vendor"}}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat} />, document.getElementById("container"));
+        expect(document.querySelector('[data-qa="feature-info-max-items"]')).toBeTruthy();
+        expect(document.querySelector('[data-qa="feature-info-max-items"]').value).toBe('10');
+        expect(document.querySelector('[data-qa="feature-info-buffer"]')).toNotExist();
+    });
+
+    it('test WMS feature info buffer is clamped to the maximum immediately', done => {
+        ReactDOM.render(<FeatureInfo
+            element={{
+                type: "wms",
+                serverType: "geoserver",
+                featureInfo: {}
+            }}
+            onChange={(key, value) => {
+                try {
+                    expect(key).toBe('featureInfo');
+                    expect(value.buffer).toBe(1000);
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat} />, document.getElementById("container"));
+        const bufferInput = document.querySelector('[data-qa="feature-info-buffer"]');
+        TestUtils.Simulate.change(bufferInput, {target: {value: "1001"}});
+    });
+
+    it('should request WMS GetCapabilities for wms layers', (done) => {
+
+        mockAxios.onGet().reply((req) => {
+            try {
+                expect(req.url).toBe('/geoserver/wms?service=WMS&version=1.3.0&request=GetCapabilities');
+            } catch (e) {
+                done(e);
+            }
+            done();
+            return [200, {}];
+        });
+        ReactDOM.render(<DndFeatureInfo element={{ type: "wms", url: '/geoserver/wms' }}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat} />, document.getElementById("container"));
+    });
+
+    it('should request WFS GetCapabilities for wfs layers', (done) => {
+
+        mockAxios.onGet().reply((req) => {
+            try {
+                expect(req.url).toBe('/geoserver/wfs?version=1.1.0&service=WFS&request=GetCapabilities');
+            } catch (e) {
+                done(e);
+            }
+            done();
+            return [200, {}];
+        });
+        ReactDOM.render(<DndFeatureInfo element={{ type: "wfs", url: '/geoserver/wfs' }}
+            formatCards={formatCards}
+            defaultInfoFormat={defaultInfoFormat} />, document.getElementById("container"));
+    });
+});

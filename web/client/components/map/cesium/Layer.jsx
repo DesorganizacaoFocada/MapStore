@@ -1,0 +1,508 @@
+/*
+ * Copyright 2017, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import React from 'react';
+
+import Layers from '../../../utils/cesium/Layers';
+import PropTypes from 'prop-types';
+import { round, isNil, castArray, isFunction } from 'lodash';
+import { getResolutions } from '../../../utils/MapUtils';
+import axios from '../../../libs/ajax';
+import { getProxyCacheByUrl } from '../../../utils/ProxyUtils';
+
+class CesiumLayer extends React.Component {
+    static propTypes = {
+        map: PropTypes.object,
+        type: PropTypes.string,
+        options: PropTypes.object,
+        onCreationError: PropTypes.func,
+        onLayerLoading: PropTypes.func,
+        onLayerLoad: PropTypes.func,
+        position: PropTypes.number,
+        securityToken: PropTypes.string,
+        zoom: PropTypes.number,
+        imageryLayersTreeUpdatedCount: PropTypes.number,
+        onImageryLayersTreeUpdate: PropTypes.func
+    };
+
+    static defaultProps = {
+        onLayerLoading: () => {},
+        onLayerLoad: () => {}
+    };
+
+    componentDidMount() {
+        // initial visibility should also take into account the visibility limits
+        // in particular for detached layers (eg. Vector, WFS, 3D Tiles, ...)
+        const visibility = this.getVisibilityOption(this.props);
+        this._isMounted = true;
+        this.createLayer(this.props.type, { ...this.props.options, visibility }, this.props.position, this.props.map, this.props.securityToken);
+        if (this.props.options && this.layer && visibility) {
+            this.addLayer(this.props);
+            this.updateZIndex();
+            if (this.provider) {
+                this.props.onImageryLayersTreeUpdate();
+            }
+        }
+    }
+
+    UNSAFE_componentWillReceiveProps(newProps) {
+
+        this.setLayerVisibility(newProps);
+
+        const newOpacity = newProps.options && newProps.options.opacity !== undefined ? newProps.options.opacity : 1.0;
+        this.setLayerOpacity(newOpacity);
+
+        if (newProps.position !== this.props.position) {
+            this.updateZIndex(newProps.position);
+            if (this.provider) {
+                this.provider._position = newProps.position;
+            }
+            this.props.onImageryLayersTreeUpdate();
+        }
+        if (this.props.options && this.props.options.params && this.layer.updateParams && newProps.options.visibility) {
+            const changed = Object.keys(this.props.options.params).reduce((found, param) => {
+                if (newProps.options.params[param] !== this.props.options.params[param]) {
+                    return true;
+                }
+                return found;
+            }, false);
+            if (changed) {
+                const oldProvider = this.provider;
+                const newLayer = this.layer.updateParams(newProps.options.params);
+                this.layer = newLayer;
+                this.setLayerLoading(this.layer, newProps.options);
+                this.addLayer(newProps);
+                setTimeout(() => {
+                    this.removeLayer(oldProvider);
+                }, 1000);
+            }
+        }
+        this.updateLayer(newProps, this.props);
+    }
+
+    componentWillUnmount() {
+
+        this._isMounted = false;
+
+        if (this.layer && this.props.map && !this.props.map.isDestroyed()) {
+            // detached layers are layers that do not work through a provider
+            // for this reason they cannot be added or removed from the map imageryProviders
+            if (this.layer.detached && this.layer?.remove) {
+                this.layer.remove();
+            } else {
+                this.removeLayer();
+            }
+            if (this.refreshTimer) {
+                clearInterval(this.refreshTimer);
+            }
+        }
+    }
+
+    render() {
+        if (this.props.children) {
+            const layer = this.layer;
+            const children = layer ? React.Children.map(this.props.children, child => {
+                return child ? React.cloneElement(child, {container: layer, styleName: this.props.options && this.props.options.styleName}) : null;
+            }) : null;
+            return (
+                <>
+                    {children}
+                </>
+            );
+        }
+        return Layers.renderLayer(this.props.type, this.props.options, this.props.map, this.props.map.id, this.layer);
+
+    }
+
+    updateZIndex = (position) => {
+        const layerPos = position || this.props.position;
+        // in some cases the position index inside layer state
+        // does not match the one inside imagery layers of Cesium
+        // because a 3D environment could contain others entities that does not follow the imagery z index
+        // (eg: terrain or meshes)
+        if (this.provider) {
+            // take the current index of the image layer
+            const previousIndex = this.props.map.imageryLayers._layers.indexOf(this.provider);
+            // sort list of imagery layers by new positions
+            const nextImageryLayersOrder = [...this.props.map.imageryLayers._layers].sort((a, b) => {
+                const aPosition = a === this.provider ? layerPos : a._position;
+                const bPosition = b === this.provider ? layerPos : b._position;
+                return aPosition - bPosition;
+            });
+            // take the next index of the image layer
+            const nextIndex = nextImageryLayersOrder.indexOf(this.provider);
+            const diff = nextIndex - previousIndex;
+            if (diff !== 0) {
+                [...new Array(Math.abs(diff)).keys()]
+                    .forEach(() => {
+                        this.props.map.imageryLayers[diff > 0 ? 'raise' : 'lower'](this.provider);
+                    });
+            }
+            this.props.map.scene.requestRender();
+        }
+    };
+
+    setDetachedLayerVisibility = (visibility, props) => {
+        // use internal setVisible
+        // if a detached layers implements setVisible
+        if (this.layer?.setVisible) {
+            this.layer.setVisible(visibility);
+            return;
+        }
+        // if visible we will remove the layer and create a new one
+        if (visibility) {
+            this.removeLayer();
+            this.createLayer(props.type, {
+                ...props.options,
+                visibility
+            }, props.position, props.map, props.securityToken);
+            if (this.layer.add) {
+                this.layer.add();
+            }
+            return;
+        }
+        // while hidden layers will be completely removed
+        this.removeLayer();
+        return;
+    };
+
+    setImageryLayerVisibility = (visibility, props) => {
+        // this type of layer will be added and removed from the imageryLayers array of Cesium
+        if (!this.provider) {
+            if (visibility) {
+                this.addLayer(props);
+                this.updateZIndex();
+                return;
+            }
+            this.removeLayer();
+            return;
+        }
+        // use the native show property to avoid re-creation of an imagery layer
+        this.provider.show = !!visibility;
+        return;
+    }
+
+    setLayerVisibility = (newProps) => {
+        const oldVisibility = this.getVisibilityOption(this.props);
+        const newVisibility = this.getVisibilityOption(newProps);
+        if (newVisibility !== oldVisibility) {
+            if (!!this.layer?.detached) {
+                this.setDetachedLayerVisibility(newVisibility, newProps);
+            } else {
+                this.setImageryLayerVisibility(newVisibility, newProps);
+            }
+            newProps.map.scene.requestRender();
+        }
+    };
+
+    getVisibilityOption = (props) => {
+        // use the global resolutions as fallback
+        // cesium does not provide resolutions
+        const { options = {}, zoom, resolutions = getResolutions() } = props;
+        const intZoom = round(zoom);
+        const {
+            visibility,
+            minResolution = -Infinity,
+            maxResolution = Infinity,
+            disableResolutionLimits
+        } = options || {};
+        if (!disableResolutionLimits && !isNil(resolutions[intZoom])) {
+            const resolution = resolutions[intZoom];
+            // use similar approach of ol
+            // maxResolution is exclusive
+            // minResolution is inclusive
+            if (!(resolution < maxResolution && resolution >= minResolution)) {
+                return false;
+            }
+        }
+        return !!visibility;
+    };
+
+    setLayerOpacity = (opacity) => {
+        const oldOpacity = this.props.options && this.props.options.opacity !== undefined ? this.props.options.opacity : 1.0;
+        if (opacity !== oldOpacity && this.layer && this.provider) {
+            this.provider.alpha = opacity;
+            this.props.map.scene.requestRender();
+        }
+    };
+
+    /**
+     * Manage the case of coalescing multiple layers, or old layers that are grouped together
+     * @param {Object} options layer options, can be a single layer or a group of layers
+     * @param {*} callback
+     */
+    getCoalesceGroupIds = (options) => {
+        return (options && options._coalesceGroupIds) || [options && options.id];
+    };
+
+    forEachCoalesceGroupId = (options, callback) => {
+        this.getCoalesceGroupIds(options).forEach(callback);
+    };
+
+    setLayerLoading = (layer, options) => {
+        if (layer) {
+            let loadTimeout;
+            layer.loader = {
+                onLayerLoading: () => {
+                    if (loadTimeout) {
+                        clearTimeout(loadTimeout);
+                        loadTimeout = undefined;
+                    }
+                    this.props.onLayerLoading(this.getCoalesceGroupIds(options));
+                },
+                onLayerLoad: (error) => {
+                    if (loadTimeout) {
+                        clearTimeout(loadTimeout);
+                    }
+                    loadTimeout = setTimeout(() => {
+                        this.props.onLayerLoad(this.getCoalesceGroupIds(options), error);
+                    }, 300);
+                }
+            };
+            // wrap requestImage on imagery providers to track per-layer loading
+            if (!layer.detached && typeof layer.requestImage === 'function') {
+                this._wrapRequestImage(layer, options);
+            }
+        }
+    };
+
+    _wrapRequestImage = (imageryProvider, options) => {
+        const orig = imageryProvider.requestImage.bind(imageryProvider);
+        let pending = 0;
+        let loadTimeout;
+        imageryProvider.requestImage = (x, y, level, request) => {
+            const result = orig(x, y, level, request);
+            if (result && typeof result.then === 'function') {
+                if (pending === 0) {
+                    if (loadTimeout) {
+                        clearTimeout(loadTimeout);
+                        loadTimeout = undefined;
+                    }
+                    this.props.onLayerLoading(this.getCoalesceGroupIds(options));
+                }
+                pending++;
+                const onComplete = (error) => {
+                    pending--;
+                    if (pending === 0) {
+                        if (loadTimeout) {
+                            clearTimeout(loadTimeout);
+                        }
+                        loadTimeout = setTimeout(() => {
+                            this.props.onLayerLoad(this.getCoalesceGroupIds(options), error);
+                        }, 300);
+                    }
+                };
+                result.then(() => onComplete(), () => onComplete({error: true}));
+            }
+            return result;
+        };
+    };
+
+    createLayer = (type, options, position, map, securityToken) => {
+        if (type) {
+            const isProxy = options?.url ? getProxyCacheByUrl(castArray(options.url)[0]) : undefined;
+            if (isProxy !== undefined) {
+                this._isProxy = isProxy;
+                this._prevIsProxy = this._isProxy;
+            }
+            const opts = {
+                ...options,
+                ...(position ? { zIndex: position } : null),
+                position,
+                securityToken,
+                ...(this._isProxy ? { forceProxy: this._isProxy } : null)
+            };
+            this.layer = Layers.createLayer(type, opts, map);
+            const isPromise = this.layer && isFunction(this.layer.then);
+            if (isPromise) {
+                this.layer.then((resolvedLayer) => {
+                    this.layer = resolvedLayer;
+                    this.layer.layerId = options.id;
+                    this.setLayerLoading(this.layer, options);
+                    this.provider = map.imageryLayers.addImageryProvider(resolvedLayer);
+                    if (this.layer) {
+                        this.layer.layerName = options.name;
+                        this.layer.layerId = options.id;
+                    }
+                    if (this.layer === null) {
+                        this.props.onCreationError(options);
+                    }
+                    this.props.map.scene.requestRender();
+                });
+                return;
+            }
+            if (this.layer) {
+                this.layer.layerName = options.name;
+                this.layer.layerId = options.id;
+                this.setLayerLoading(this.layer, options);
+            }
+            if (this.layer === null) {
+                this.props.onCreationError(options);
+            }
+            this.props.map.scene.requestRender();
+        }
+    };
+
+    updateLayer = (newProps, oldProps) => {
+        const newLayer = Layers.updateLayer(
+            newProps.type,
+            this.layer,
+            {
+                ...newProps.options,
+                securityToken: newProps.securityToken,
+                forceProxy: newProps.options?.forceProxy || this._isProxy,
+                imageryLayersTreeUpdatedCount: newProps.imageryLayersTreeUpdatedCount,
+                position: newProps.position
+            },
+            {
+                ...oldProps.options,
+                securityToken: oldProps.securityToken,
+                forceProxy: oldProps.options?.forceProxy || this._prevIsProxy,
+                imageryLayersTreeUpdatedCount: oldProps.imageryLayersTreeUpdatedCount,
+                position: oldProps.position
+            },
+            this.props.map);
+        if (newLayer) {
+            const isPromise = this.layer && isFunction(this.layer.then);
+            if (isPromise) {
+                this.layer.then((resolvedLayer) => {
+                    if (this._isMounted) {
+                        this.removeLayer();
+                        this.layer = resolvedLayer;
+                        this.setLayerLoading(this.layer, newProps.options);
+                        this.provider = this.props.map.imageryLayers.addImageryProvider(resolvedLayer);
+                        this.provider._position = this.props.position;
+                        if (newProps.options.opacity !== undefined) {
+                            this.provider.alpha = newProps.options.opacity;
+                        }
+                        this.props.onImageryLayersTreeUpdate();
+                        newProps.map.scene.requestRender();
+                    }
+                });
+                return;
+            }
+
+            this.removeLayer();
+            this.layer = newLayer;
+            this.setLayerLoading(this.layer, newProps.options);
+            if (newProps.options.visibility) {
+                this.addLayer(newProps);
+            }
+
+        }
+        this.updateZIndex(newProps.position);
+        newProps.map.scene.requestRender();
+    };
+
+    addLayerInternal = (newProps) => {
+        if (newProps.options.useForElevation) {
+            this.props.map.terrainProvider = this.layer;
+        } else {
+            const isPromise = this.layer && isFunction(this.layer.then);
+            if (isPromise) {
+                this.layer.then((resolvedLayer) => {
+                    if (this._isMounted) {
+                        this.layer = resolvedLayer;
+
+                        this.provider = this.props.map.imageryLayers.addImageryProvider(resolvedLayer);
+                        this.provider._position = this.props.position;
+                        if (newProps.options.opacity !== undefined) {
+                            this.provider.alpha = newProps.options.opacity;
+                        }
+                        this.props.onImageryLayersTreeUpdate();
+                        newProps.map.scene.requestRender();
+                    }
+                });
+                return;
+            }
+
+            this.provider = this.props.map.imageryLayers.addImageryProvider(this.layer);
+            this.provider._position = this.props.position;
+            if (newProps.options.opacity !== undefined) {
+                this.provider.alpha = newProps.options.opacity;
+            }
+        }
+        this.props.onImageryLayersTreeUpdate();
+        newProps.map.scene.requestRender();
+    };
+
+    _addLayer = (newProps) => {
+        // detached layers are layers that do not work through a provider
+        // for this reason they cannot be added or removed from the map imageryProviders
+        if (this.layer && !this.layer.detached) {
+            this.addLayerInternal(newProps);
+            if (this.props.options.refresh && this.layer.updateParams) {
+                let counter = 0;
+                this.refreshTimer = setInterval(() => {
+                    const newLayer = this.layer.updateParams(Object.assign({}, this.props.options.params, {_refreshCounter: counter++}));
+                    this.removeLayer();
+                    this.layer = newLayer;
+                    this.setLayerLoading(this.layer, this.props.options);
+                    this.addLayerInternal(newProps);
+                    this.props.map.scene.requestRender();
+                }, this.props.options.refresh);
+            }
+        }
+        if (this.layer?.detached && this.layer?.add) {
+            this.layer.add();
+        }
+    };
+
+    addLayer = (newProps) => {
+        // For detached layers (WFS, arcgis-feature, 3D Tiles, ...)
+        // skip async proxy detection to allow the layer to be added synchronously
+        if (this.layer?.detached) {
+            return this._addLayer(newProps);
+        }
+        if (this._isProxy === undefined && newProps?.options?.url) {
+            const urls = castArray(newProps.options.url);
+            return axios(urls[0], { noProxy: true })
+                // this request is used only to detect if the layer needs the proxy,
+                // a failure (e.g. CORS error) is expected and must not produce an unhandled rejection
+                // preventing the error avoids an unhandled rejection in console.
+                .catch(() => {
+                    console.warn(`Failed to detect proxy for ${urls[0]}. This is expected if the server does not support CORS.`);
+                    return null;
+                })
+                .finally(() => {
+                    this._isProxy = !!getProxyCacheByUrl(urls[0]);
+                    // the layer was created with the forceProxy value coming from its options,
+                    // recreate it through updateLayer only when the detection requires a different proxy setup,
+                    // otherwise the already created layer must simply be added to the map
+                    const createdWithProxy = !!newProps?.options?.forceProxy;
+                    const needsProxy = createdWithProxy || this._isProxy;
+                    if (createdWithProxy === needsProxy) {
+                        this._addLayer(newProps);
+                        this.updateZIndex(newProps.position);
+                    } else {
+                        this.updateLayer(newProps, this.props);
+                    }
+                    this._prevIsProxy = this._isProxy;
+                });
+        }
+        return this._addLayer(newProps);
+    }
+
+    removeLayer = (provider) => {
+        if (this.layer?.destroy) {
+            this.layer.destroy();
+        }
+        const toRemove = provider || this.provider;
+        if (toRemove) {
+            this.props.map.imageryLayers.remove(toRemove);
+            this.props.onImageryLayersTreeUpdate();
+        }
+        // detached layers are layers that do not work through a provider
+        // for this reason they cannot be added or removed from the map imageryProviders
+        if (this.layer?.detached && this.layer?.remove) {
+            this.layer.remove();
+        }
+        this.props.map.scene.requestRender();
+    };
+}
+
+export default CesiumLayer;

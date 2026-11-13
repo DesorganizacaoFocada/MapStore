@@ -1,0 +1,91 @@
+//
+// Copyright 2021, GeoSolutions Sas.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
+//
+
+// **************
+// Theme
+// **************
+#ms-components-theme(@theme-vars) {
+    .mapstore-switch-panel {
+        .panel-heading {
+            .color-var(@theme-vars[main-color]);
+            .background-color-var(@theme-vars[main-bg]);
+        }
+    }
+}
+
+// **************
+// Layout
+// **************
+.mapstore-switch-panel {
+    padding: 8px;
+    .panel {
+        border: none;
+        box-shadow: none;
+        margin: 0;
+    }
+    .panel-heading {
+        height: @switch-panel-height;
+        border: none;
+        padding: 0;
+        .pull-left {
+            line-height: @switch-panel-height;
+        }
+        .mapstore-switch-btn, .switch-error, .switch-loading {
+            float: right;
+            margin: ((@square-btn-size - @button-size-sm) / 2) 0;
+        }
+        .switch-loading {
+            width:  @square-btn-size;
+            height: @square-btn-size;
+        }
+        .btn-group {
+            float: right;
+            margin: (((@square-btn-size - @button-size-sm) / 2) - 2) 0;
+            margin-right: ((((@square-btn-size - @button-size-sm) / 2) - 2) / 2);
+            .square-button {
+                padding: 0;
+                text-align: center;
+                padding-top: (@icon-size / 8);
+                margin-left: ((((@square-btn-size - @button-size-sm) / 2) - 2) / 2);
+                span {
+                    font-size: @icon-size;
+                }
+            }
+        }
+    }
+
+    .panel-body {
+        .mapstore-block-width {
+            .m-label {
+                height: @square-btn-size;
+                line-height: @square-btn-size;
+                width: 100%;
+                text-overflow: ellipsis;
+                margin-top: ((@square-btn-size - @button-size-sm) / 2);
+            }
+            .rw-combobox {
+                margin-top: ((@square-btn-size - 34) / 2);
+            }
+
+            .btn-group {
+                margin-top: ((@square-btn-size - @button-size-sm) / 2);
+            }
+        }
+        padding: 0;
+    }
+}
+
+.catalog-panel {
+    .form-group {
+        width: 100%;
+    }
+
+    .ms2-border-layout-body {
+        overflow-x: hidden;
+    }
+}

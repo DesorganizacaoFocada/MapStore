@@ -1,0 +1,341 @@
+/*
+ * Copyright 2026, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import expect from 'expect';
+
+import { getInteractionTargetNodeDisabled, getVisibleConfigurationKeys } from '../interactionHelpers';
+import { CONFIGURATION_RENDER_MODES } from '../interactionConstants';
+import { TARGET_TYPES } from '../../../../../../../utils/InteractionUtils';
+
+const sourceNodePath = 'widgets[filter-widget].filters[filter-1]';
+const otherSourceNodePath = 'widgets[filter-widget].filters[filter-2]';
+
+const applyDimensionTarget = {
+    targetType: 'applyDimension'
+};
+
+const applyStyleTarget = {
+    targetType: 'applyStyle'
+};
+
+const elementItem = {
+    type: 'element'
+};
+
+const collectionItem = {
+    type: 'collection'
+};
+
+describe('interactionHelpers', () => {
+    describe('getInteractionTargetNodeDisabled', () => {
+        it('should not disable collection nodes', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: collectionItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map',
+                sourceNodePath
+            });
+
+            expect(result).toEqual({
+                disabled: false,
+                reasonMsgId: null
+            });
+        });
+
+        it('should disable style targets already connected from another source', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyStyleTarget,
+                targetNodePath: 'map.layers[layer-1]',
+                sourceNodePath,
+                alreadyExistingInteractions: [{
+                    plugged: true,
+                    targetType: 'applyStyle',
+                    source: {
+                        nodePath: otherSourceNodePath
+                    },
+                    target: {
+                        nodePath: 'map.layers[layer-1]'
+                    }
+                }]
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToAnotherFilterTooltip'
+            });
+        });
+
+        it('should disable layer dimension targets already connected from another source', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.layers[layer-1].params.elevation',
+                sourceNodePath,
+                alreadyExistingInteractions: [{
+                    plugged: true,
+                    targetType: 'applyDimension',
+                    source: {
+                        nodePath: otherSourceNodePath
+                    },
+                    target: {
+                        nodePath: 'map.layers[layer-1].params.elevation'
+                    }
+                }]
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToAnotherFilterTooltip'
+            });
+        });
+
+        it('should disable unplugged apply dimension targets for multiple selection sources', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.layers[layer-1].params.elevation',
+                sourceNodePath,
+                plugged: false,
+                sourceSelectionMode: 'multiple'
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.applyDimensionMultipleSelectionDisabledTooltip'
+            });
+        });
+
+        it('should disable layer time targets when controlled by map time', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.layers[layer-1].params.time',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: true
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.layerTimeControlledByTimelineTooltip'
+            });
+        });
+
+        it('should disable chart axis applied current time targets when controlled by map time', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'widgets[chart-widget].charts[chart-1].traces[trace-1].yAxisOpts[0].appliedCurrentTime',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: true
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.axisCurrentTimeControlledByTimelineTooltip'
+            });
+        });
+
+        it('should disable chart axis applied current time targets when axis current time is not enabled', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: {
+                    ...elementItem,
+                    interactionMetadata: {
+                        targets: [{
+                            targetType: 'applyDimension',
+                            showCurrentTimeEnabled: false,
+                            dateType: true
+                        }]
+                    }
+                },
+                target: applyDimensionTarget,
+                targetNodePath: 'widgets[chart-widget].charts[chart-1].traces[trace-1].yAxisOpts[0].appliedCurrentTime',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: false
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.axisCurrentTimeDisabledTooltip'
+            });
+        });
+
+        it('should disable chart axis applied current time targets when axis is not date type', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: {
+                    ...elementItem,
+                    interactionMetadata: {
+                        targets: [{
+                            targetType: 'applyDimension',
+                            showCurrentTimeEnabled: true,
+                            dateType: false
+                        }]
+                    }
+                },
+                target: applyDimensionTarget,
+                targetNodePath: 'widgets[chart-widget].charts[chart-1].traces[trace-1].yAxisOpts[0].appliedCurrentTime',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: false
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.axisCurrentTimeDisabledTooltip'
+            });
+        });
+
+        it('should allow map time targets when timeline is available', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.time',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: true
+            });
+
+            expect(result).toEqual({
+                disabled: false,
+                reasonMsgId: null
+            });
+        });
+
+        it('should disable zoomTo targets when no applyFilter sibling exists for the same map', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: { targetType: TARGET_TYPES.APPLY_ZOOM_TO },
+                targetNodePath: 'map.applyZoomTo',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: false,
+                alreadyExistingInteractions: [] // No applyFilter connection
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.zoomToRequiresApplyFilterTooltip'
+            });
+        });
+
+        it('should enable zoomTo targets when applyFilter sibling exists for the same map', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: { targetType: TARGET_TYPES.APPLY_ZOOM_TO },
+                targetNodePath: 'map.applyZoomTo',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: false,
+                alreadyExistingInteractions: [{
+                    source: { nodePath: sourceNodePath },
+                    target: { nodePath: 'map.layers[layer-1]' },
+                    targetType: 'applyFilter',
+                    plugged: true
+                }]
+            });
+
+            expect(result).toEqual({
+                disabled: false,
+                reasonMsgId: null
+            });
+        });
+
+        it('should disable map time targets when timeline is unavailable', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.time',
+                sourceNodePath,
+                plugged: false,
+                timelineEnabled: false
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.timelineTargetUnavailableTooltip'
+            });
+        });
+
+        it('should disable non-map-time targets when map time has two way synchronization enabled from the same source', () => {
+            const result = getInteractionTargetNodeDisabled({
+                item: elementItem,
+                target: applyDimensionTarget,
+                targetNodePath: 'map.layers[layer-1].params.elevation',
+                sourceNodePath,
+                alreadyExistingInteractions: [{
+                    plugged: false,
+                    targetType: 'applyDimension',
+                    source: {
+                        nodePath: sourceNodePath
+                    },
+                    target: {
+                        nodePath: 'map.time'
+                    },
+                    configuration: {
+                        twoWaySynchronization: true
+                    }
+                }]
+            });
+
+            expect(result).toEqual({
+                disabled: true,
+                reasonMsgId: 'widgets.filterWidget.targetAlreadyConnectedToTimeTooltip'
+            });
+        });
+    });
+
+    describe('getVisibleConfigurationKeys', () => {
+        const configuration = {
+            forcePlug: false,
+            twoWaySynchronization: false,
+            autoZoom: false
+        };
+
+        it('returns empty array when context makes everything invisible', () => {
+            const context = {
+                targetType: 'unsupported',
+                nodePath: 'map.time'
+            };
+            expect(getVisibleConfigurationKeys(configuration, context)).toEqual([]);
+        });
+
+        it('returns forcePlug for panel checkbox when nodePath is not map.time', () => {
+            const context = {
+                nodePath: 'map.layers[layer-1]'
+            };
+            const keys = getVisibleConfigurationKeys(configuration, context, CONFIGURATION_RENDER_MODES.PANEL_CHECKBOX);
+            expect(keys).toContain('forcePlug');
+            expect(keys).toNotContain('twoWaySynchronization');
+            expect(keys).toNotContain('autoZoom');
+        });
+
+        it('returns twoWaySynchronization for panel checkbox when targetType is applyDimension and nodePath is map.time', () => {
+            const context = {
+                targetType: 'applyDimension',
+                nodePath: 'map.time'
+            };
+            const keys = getVisibleConfigurationKeys(configuration, context, CONFIGURATION_RENDER_MODES.PANEL_CHECKBOX);
+            expect(keys).toNotContain('forcePlug');
+            expect(keys).toContain('twoWaySynchronization');
+            expect(keys).toNotContain('autoZoom');
+        });
+
+        it('returns autoZoom for inline button when targetType is applyZoomTo and plugged is true', () => {
+            const context = {
+                targetType: 'applyZoomTo',
+                plugged: true
+            };
+            const keys = getVisibleConfigurationKeys(configuration, context, CONFIGURATION_RENDER_MODES.INLINE_BUTTON);
+            expect(keys).toContain('autoZoom');
+            expect(keys).toNotContain('forcePlug');
+            expect(keys).toNotContain('twoWaySynchronization');
+        });
+    });
+});

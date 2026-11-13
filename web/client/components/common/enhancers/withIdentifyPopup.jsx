@@ -1,0 +1,170 @@
+/*
+ * Copyright 2020, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import React from 'react';
+import {compose, branch, withStateHandlers, withPropsOnChange, mapPropsStream, createEventHandler} from 'recompose';
+import {Observable} from 'rxjs';
+import { isEqual} from 'lodash';
+import { v1 as uuidv1 } from 'uuid';
+import MapInfoViewer from '../MapInfoViewer';
+import {getFeatureInfoForViews} from '../../../api/identify';
+
+import {
+    getAvailableInfoFormatValues,
+    getDefaultInfoFormatValue,
+    defaultQueryableFilter,
+    filterRequestParams,
+    getValidator,
+    resolveIdentifyLayer
+} from '../../../utils/MapInfoUtils';
+
+import { isInsideResolutionsLimits } from '../../../utils/LayersUtils';
+
+// verify if 'application/json' is available if not use default
+export const getDefaultInfoFormat = () => {
+    const availableInfoFormats = getAvailableInfoFormatValues();
+    return availableInfoFormats.indexOf('application/json') !== -1
+        ? 'application/json'
+        : getDefaultInfoFormatValue();
+};
+
+// Simplified version of load feature info request derived from identify epics
+export const withIdentifyRequest  = mapPropsStream(props$ => {
+    const { stream: loadFeatureInfo$, handler: getFeatureInfoHandler} = createEventHandler();
+    return loadFeatureInfo$.withLatestFrom(props$
+        .map(({map, layers, options}) => ({map, layers, options}))
+        .distinctUntilChanged((a, b ) => isEqual(a, b)))
+        .switchMap(([{point}, {map, layers = [], options: {mapOptions: {mapInfoFormat = getDefaultInfoFormat()} = {}} = {}}]) => {
+            const queryableLayers = layers.filter((layer) => isInsideResolutionsLimits(layer, map.resolution) && defaultQueryableFilter(layer));
+            const excludeParams = ["SLD_BODY"];
+            const includeOptions = [
+                "buffer",
+                "cql_filter",
+                "filter",
+                "propertyName"
+            ];
+            if (queryableLayers.length === 0) {
+                // mock a empty response to display the error message
+                return Observable.of({
+                    requests: [{}],
+                    responses: [{
+                        response: { features: [] }
+                    }],
+                    validResponses: []
+                });
+            }
+
+            const identifyOptions = {
+                format: mapInfoFormat,
+                map,
+                point,
+                currentLocale: "en-US"
+            };
+            return Observable.from(queryableLayers)
+                .mergeMap(identifyLayer => Observable
+                    .defer(() => resolveIdentifyLayer(identifyLayer, identifyOptions))
+                    .mergeMap(layer => {
+                        const appParams = filterRequestParams(layer, includeOptions, excludeParams);
+                        const reqId = uuidv1();
+                        const viewResponses$ = getFeatureInfoForViews(layer, identifyOptions, { params: appParams });
+                        if (!viewResponses$) {
+                            return Observable.empty();
+                        }
+                        return viewResponses$
+                            .map(({views, layerMetadata, viewResponses, features, featuresCrs, primaryResponse, error}) => error
+                                ? ({ reqId, error, layer, layerMetadata })
+                                : ({
+                                    reqId,
+                                    layer,
+                                    ...primaryResponse,
+                                    viewResponses,
+                                    layerMetadata: {
+                                        ...layerMetadata,
+                                        featureInfo: {
+                                            ...(layer.featureInfo || {}),
+                                            views
+                                        },
+                                        features,
+                                        featuresCrs
+                                    }
+                                })
+                            )
+                            .catch((e) => Observable.of({
+                                reqId,
+                                error: e.data || e.statusText || e.status
+                            }))
+                            .startWith(({
+                                start: true,
+                                reqId
+                            }));
+                    }))
+                .scan(({requests, responses, validResponses}, action) => {
+                    if (action.start) {
+                        const {reqId} = action;
+                        return {requests: requests.concat({ reqId }), responses, validResponses};
+                    }
+                    const {reqId, response, queryParams, viewResponses, layer, layerMetadata} = action;
+                    const validator = getValidator(mapInfoFormat);
+                    const newResponses = responses.concat({reqId, response, queryParams, viewResponses, layer, layerMetadata});
+                    const newValidResponses = validator.getValidResponses(newResponses);
+                    return {requests, validResponses: newValidResponses, responses: newResponses};
+                }, {requests: [], responses: [], validResponses: []});
+        })
+        .startWith({requests: [], responses: []})
+        .combineLatest(props$, (mapInfo, props = {}) => {
+            return {
+                ...props,
+                mapInfo,
+                getFeatureInfoHandler
+            };
+        });
+});
+
+/**
+ * Add identify popup support to base map and throws mapInfo requests
+ */
+export const  withPopupSupport =  branch(({map: {mapInfoControl = false} = {}}) => mapInfoControl,
+    compose(
+        withIdentifyRequest,
+        withStateHandlers(({'popups': []}), {
+            onClick: (_state, {getFeatureInfoHandler = () => {}}) => ({rawPos: coordinates = [], ...point}, layerInfo) =>  {
+                getFeatureInfoHandler({point, layerInfo});
+                return {popups: [{ position: {  coordinates}, id: uuidv1() }]};
+            },
+            onPopupClose: () => () => ({popups: []})
+        }),
+        withPropsOnChange(["mapInfo", "popups"], ({mapInfo, popups, options: {mapOptions: {mapInfoFormat = getDefaultInfoFormat()} = {}} = {}}) => {
+            const {responses, requests, validResponses} = mapInfo;
+            const component = () => (<MapInfoViewer
+                renderValidOnly
+                responses={responses} requests={requests}
+                validResponses={validResponses}
+                format={mapInfoFormat} showEmptyMessageGFI missingResponses={(requests || []).length - (responses || []).length} />);
+            return {popups: popups.map((popup) => ({...popup, component}))};
+        }),
+        withPropsOnChange(
+            ['plugins', 'onPopupClose', 'popups'],
+            ({plugins, popups, onPopupClose} = {}) => {
+                const {PopupSupport, tools = {}, ...rest} = plugins;
+                if (!PopupSupport) {
+                    return {};
+                }
+                const Popups = (props) => (<PopupSupport {...props} popups={popups} onPopupClose={onPopupClose}/>);
+                return {plugins: {...rest, tools: {...tools, popup: Popups}}};
+            })
+    ));
+
+
+export const withOnClick = withPropsOnChange(
+    ['onClick', 'eventHandlers'],
+    ({ onClick = () => {}, eventHandlers = {} } = {}) => ({
+        eventHandlers: {
+            ...eventHandlers,
+            onClick
+        }
+    })
+);

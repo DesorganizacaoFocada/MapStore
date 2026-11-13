@@ -1,0 +1,149 @@
+//
+// Copyright 2021, GeoSolutions Sas.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
+//
+
+// **************
+// Theme
+// **************
+#ms-components-theme(@theme-vars) {
+    .mapstore-switch-btn {
+        .m-slider {
+            .background-color-var(@theme-vars[primary]);
+
+            &:before {
+                .background-color-var(@theme-vars[primary-contrast]);
+            }
+        }
+
+        input {
+            &:checked {
+                +.m-slider {
+                    .background-color-var(@theme-vars[primary]);
+                }
+            }
+
+            &:disabled+.m-slider {
+                .background-color-var(@theme-vars[main-variant-bg]);
+            }
+        }
+    }
+}
+
+// **************
+// Layout
+// **************
+.mapstore-switch-panel {
+    .panel {
+        margin: 0;
+    }
+    .panel-heading {
+        overflow: hidden;
+        padding: 0;
+        border-bottom: none;
+        .pull-left {
+            font-weight: bold;
+        }
+    }
+
+    .panel-body {
+        padding: 0;
+        border-top: none;
+    }
+}
+
+.mapstore-switch-btn {
+    position: relative;
+    display: inline-block;
+    width: ((@button-size-sm * 2) - 8px); /* 60 */
+    height: @button-size-sm; /* 34 */
+    .m-slider {
+
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        opacity: 0.4;
+        -webkit-transition: 0.4s;
+        transition: 0.4s;
+        border-radius: 9999px;
+
+        &:before {
+            position: absolute;
+            content: " ";
+            height: @button-size-sm - 8px;
+            width: @button-size-sm - 8px;
+            left: 4px;
+            bottom: 4px;
+            -webkit-transition: 0.4s;
+            transition: 0.4s;
+            border-radius: 9999px;
+            .shadow();
+        }
+    }
+
+    input {
+        display: none;
+
+        &:checked {
+            + .m-slider {
+                opacity: 1.0;
+                &:before {
+                    transform: translateX(@button-size-sm - 8px);
+                }
+            }
+        }
+        &:disabled +.m-slider {
+            cursor: not-allowed;
+            opacity: 1; // disabled + unchecked are too light
+            background-color:  @input-bg-disabled;
+        }
+        &:focus + .m-slider {
+            .shadow-soft;
+        }
+    }
+
+    // Smaller variant, opt-in via className="mapstore-switch-btn-xs"
+    // Keeps the same proportions (track ~ 2x height, knob inset by padding).
+    &.mapstore-switch-btn-xs {
+        @switch-btn-xs-height: 16px;
+        @switch-btn-xs-padding: 2px;
+
+        width: ((@switch-btn-xs-height * 2) - (@switch-btn-xs-padding * 2));
+        height: @switch-btn-xs-height;
+
+        .m-slider {
+            &:before {
+                height: @switch-btn-xs-height - (@switch-btn-xs-padding * 2);
+                width: @switch-btn-xs-height - (@switch-btn-xs-padding * 2);
+                left: @switch-btn-xs-padding;
+                bottom: @switch-btn-xs-padding;
+            }
+        }
+
+        input {
+            &:checked + .m-slider {
+                &:before {
+                    transform: translateX(@switch-btn-xs-height - (@switch-btn-xs-padding * 2));
+                }
+            }
+        }
+    }
+}
+// use switch buttons inside forms.
+.form-group {
+     .mapstore-switch-btn {
+        top: 5px;
+    }
+}
+.form-inline, .form-group .form-inline {
+    .mapstore-switch-btn {
+        margin: 4px;
+        top: 10px;
+    }
+}

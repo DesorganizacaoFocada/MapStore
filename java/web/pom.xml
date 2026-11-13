@@ -1,0 +1,155 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>it.geosolutions.mapstore</groupId>
+        <artifactId>mapstore-java</artifactId>
+        <version>1.14-SNAPSHOT</version>
+    </parent>
+
+    <groupId>it.geosolutions.mapstore</groupId>
+    <artifactId>mapstore-webapp</artifactId>
+    <packaging>war</packaging>
+
+    <name>MapStore 2 - WAR</name>
+    <url>http://www.geosolutionsgroup.com</url>
+
+    <dependencies>
+        <!-- MapStore services -->
+        <dependency>
+            <groupId>it.geosolutions.mapstore</groupId>
+            <artifactId>mapstore-services</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- ================================================================ -->
+        <!-- GeoStore modules -->
+        <!-- ================================================================ -->
+        <dependency>
+            <groupId>it.geosolutions.geostore</groupId>
+            <artifactId>geostore-webapp</artifactId>
+            <type>war</type>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>proxy</groupId>
+            <artifactId>http_proxy</artifactId>
+            <type>war</type>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- JUnit -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--  mockito -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+        </dependency>
+        <!-- servlet -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.xml.ws</groupId>
+            <artifactId>jakarta.xml.ws-api</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>mapstore</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-war-plugin</artifactId>
+                <version>${maven-war-plugin.version}</version>
+                <configuration>
+                    <!--
+                        Overlays copy their WEB-INF/lib as they are, so a library also managed here
+                        would end up twice in the WAR, in two versions. Drop the overlay copy of those
+                        libraries and keep the version managed by MapStore.
+                    -->
+                    <overlays>
+                        <overlay>
+                            <groupId>it.geosolutions.geostore</groupId>
+                            <artifactId>geostore-webapp</artifactId>
+                            <excludes>
+                                <exclude>WEB-INF/classes/geostore-spring-security.xml</exclude>
+                                <exclude>WEB-INF/lib/commons-io-*.jar</exclude>
+                                <exclude>WEB-INF/lib/jackson-annotations-*.jar</exclude>
+                                <exclude>WEB-INF/lib/jackson-core-*.jar</exclude>
+                                <exclude>WEB-INF/lib/jackson-databind-*.jar</exclude>
+                                <exclude>WEB-INF/lib/log4j-api-*.jar</exclude>
+                                <exclude>WEB-INF/lib/log4j-core-*.jar</exclude>
+                                <exclude>WEB-INF/lib/log4j-slf4j-impl-*.jar</exclude>
+                                <exclude>WEB-INF/lib/slf4j-api-*.jar</exclude>
+                                <!-- the versions required by Spring Security -->
+                                <exclude>WEB-INF/lib/micrometer-commons-*.jar</exclude>
+                                <exclude>WEB-INF/lib/micrometer-observation-*.jar</exclude>
+                                <!-- legacy asm:asm, same packages as org.ow2.asm:asm 9.x shipped next to it -->
+                                <exclude>WEB-INF/lib/asm-2.*.jar</exclude>
+                            </excludes>
+                        </overlay>
+                        <overlay>
+                            <groupId>proxy</groupId>
+                            <artifactId>http_proxy</artifactId>
+                            <excludes>
+                                <exclude>WEB-INF/lib/commons-io-*.jar</exclude>
+                                <exclude>WEB-INF/lib/log4j-api-*.jar</exclude>
+                                <exclude>WEB-INF/lib/log4j-core-*.jar</exclude>
+                                <!-- SLF4J 2 binding: MapStore and GeoStore use SLF4J 1.7 with log4j-slf4j-impl -->
+                                <exclude>WEB-INF/lib/log4j-slf4j2-impl-*.jar</exclude>
+                                <exclude>WEB-INF/lib/slf4j-api-*.jar</exclude>
+                                <!-- not used by the proxy, GeoStore ships its own -->
+                                <exclude>WEB-INF/lib/commons-codec-*.jar</exclude>
+                                <!-- embedded server of the proxy standalone launcher, not used in a webapp -->
+                                <exclude>WEB-INF/lib/jetty-*.jar</exclude>
+                            </excludes>
+                        </overlay>
+                    </overlays>
+                </configuration>
+            </plugin>
+        </plugins>
+        <extensions>
+            <!--.............................................-->
+            <!--       GeoSolutions (using wagon ssh)       -->
+            <!--.............................................-->
+            <extension>
+                <groupId>org.apache.maven.wagon</groupId>
+                <artifactId>wagon-ssh</artifactId>
+                <version>3.5.3</version>
+            </extension>
+        </extensions>
+    </build>
+
+   <distributionManagement>
+        <repository>
+            <id>geosolutions</id>
+            <url>sftp://maven.geo-solutions.it/</url>
+        </repository>
+    </distributionManagement>
+
+    <repositories>
+        <!-- GeoSolutions -->
+        <repository>
+            <id>geosolutions</id>
+            <name>GeoSolutions Repository</name>
+            <url>https://maven.geo-solutions.it</url>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+
+        <repository>
+            <id>osgeo</id>
+            <name>Open Source Geospatial Foundation Repository</name>
+            <url>https://repo.osgeo.org/repository/release/</url>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+</project>

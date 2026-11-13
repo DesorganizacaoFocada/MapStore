@@ -1,0 +1,122 @@
+//
+// Copyright 2021, GeoSolutions Sas.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
+//
+
+// **************
+// Theme
+// **************
+#ms-components-theme(@theme-vars) {
+    .dashboard-editor {
+        .border-color-var(@theme-vars[main-border-color]);
+    }
+    .view-switcher-container {
+        .border-color-var(@theme-vars[main-border-color]);
+    }
+    .ms-layout-view {
+        &.is-selected {
+            > button {
+                .background-color-var(@theme-vars[selected-bg]);
+            }
+        }
+        &:hover:not(.is-selected) {
+            > button {
+                .background-color-var(@theme-vars[selected-hover-bg]);
+            }
+        }
+    }
+    .configure-view-dialog-container {
+        .glyphicon-info-sign {
+            .color-var(@theme-vars[danger]);
+        }
+    }
+}
+
+// **************
+// Layout
+// **************
+#page-dashboard,
+#page-dashboard-embedded {
+    position: absolute;
+
+    #home-button {
+        float: right;
+    }
+    > .ms2-border-layout-body {
+        position: relative;
+    }
+
+    #mapstore-navbar-container {
+        margin-bottom: 0;
+        z-index: 1032;
+    }
+
+    .ms2-border-layout-content {
+        position: relative;
+        overflow: auto;
+    }
+
+}
+#mapstore-sidebar-menu-container {
+    order: 2;
+}
+.dashboard-editor {
+    /* flex column */
+    order: 1;
+    z-index: 1;
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.12);
+
+    &.de-toolbar {
+        padding: 10px;
+    }
+
+    &.de-builder {
+        width: 500px;
+    }
+}
+
+.dashboard-color-picker {
+    width: 100px;
+}
+
+.view-switcher-container {
+
+    width: 100%;
+    border-top: 1px solid transparent;
+    min-height: 40px;
+    
+    .ms-layout-view {
+        display: flex;
+        min-width: fit-content;
+    }
+    .ms-layout-view,
+    .ms-layout-view > button {
+        height: 100%;
+        position: relative;
+        border-top: none;
+        border-bottom: none;
+    }
+
+    .ms-layout-view .dropdown-toggle {
+        padding: 0.25rem;
+    }
+
+    .ms-layout-view:first-child > .dropdown-toggle,
+    .ms-layout-view + .ms-layout-view > button {
+        border-left: none;
+    }
+
+    .view-switcher-tabs::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+.fade.in.modal.configure-view-dialog-container {
+    z-index: 150;
+    .modal-dialog.modal-dialog-container {
+        margin-top: 100px;
+    }
+}

@@ -1,0 +1,1201 @@
+import expect from 'expect';
+import {
+    generateChartWidgetTreeNode,
+    generateRootTree,
+    filterTreeWithTarget,
+    generateTableWidgetTreeNode,
+    generateCounterWidgetTreeNode,
+    generateMapWidgetTreeNode,
+    generateDynamicFilterWidgetTreeNode,
+    generateLayersMetadataTree,
+    detachSingleChildCollections,
+    addNodePathToTree,
+    filterDimensionTreeByValueAttributeType,
+    hasAllowedDimensionTarget,
+    getChartAxisFromCurrentTimeTargetPath,
+    isChartAxisDimensionTarget,
+    isMapTimeTarget,
+    isLayerDimensionTarget,
+    isLayerTimeDimensionTarget,
+    getDisplayInteractionTargetTree,
+    hasConnectableTargetNodes,
+    createLayerConstraint,
+    getConnectedActiveTargets,
+    generateLayerMetadataTree,
+    promoteMapZoomToNodes,
+    TARGET_TYPES,
+    findAllApplyFiltersForZoomTo,
+    findNodeById
+} from '../InteractionUtils';
+
+// Shared test data for all widget tests
+const testWidgets = {
+    // Chart widget with single chart (for single chart test)
+    chartWidgetSingle: {
+        id: 'chart-widget-single',
+        widgetType: 'chart',
+        title: 'Single Chart Widget',
+        charts: [{
+            chartId: 'chart-1',
+            traces: [{
+                id: 'trace-1',
+                type: 'pie',
+                layer: { name: 'gs:us_states', id: 'layer-1' }
+            }, {
+                id: 'trace-2',
+                type: 'bar',
+                xaxis: 'x-axis-1',
+                layer: { name: 'topp:states', id: 'layer-2' }
+            }],
+            xAxisOpts: [{ id: 0 }, { id: 'x-axis-1', type: 'date', showCurrentTime: true }],
+            yAxisOpts: [{ id: 0, type: 'date', showCurrentTime: false }]
+        }]
+    },
+    // Chart widget with multiple charts (already tested, but can be reused)
+    chartWidgetMultiple: {
+        id: 'chart-widget-multiple',
+        widgetType: 'chart',
+        title: 'Multiple Charts Widget',
+        charts: [{
+            chartId: 'chart-1',
+            traces: [{
+                id: 'trace-1',
+                type: 'pie',
+                layer: { name: 'gs:us_states' }
+            }]
+        }, {
+            chartId: 'chart-2',
+            traces: [{
+                id: 'trace-2',
+                type: 'bar',
+                layer: { name: 'topp:states' }
+            }]
+        }]
+    },
+    // Table widget with complete data
+    tableWidget: {
+        id: 'table-widget-1',
+        widgetType: 'table',
+        title: 'Table Widget',
+        layer: { name: 'gs:table_layer', id: 'table-layer-1' }
+    },
+    // Counter widget with complete data
+    counterWidget: {
+        id: 'counter-widget-1',
+        widgetType: 'counter',
+        title: 'Counter Widget',
+        layer: { name: 'gs:counter_layer', id: 'counter-layer-1' }
+    },
+    // Map widget with maps and layers
+    mapWidget: {
+        id: 'map-widget-1',
+        widgetType: 'map',
+        title: 'Map Widget',
+        maps: [{
+            mapId: 'map-1',
+            name: 'Map 1',
+            layers: [{
+                name: 'layer-1',
+                id: 'layer-1',
+                type: 'wms',
+                group: 'overlay'
+            }, {
+                name: 'layer-2',
+                id: 'layer-2',
+                type: 'wfs',
+                group: 'overlay'
+            }]
+        }]
+    },
+    // Filter widget with filters
+    filterWidget: {
+        id: 'filter-widget-1',
+        widgetType: 'filter',
+        title: 'Filter Widget',
+        filters: [{
+            id: 'filter-1',
+            label: 'Filter 1',
+            title: 'First Filter'
+        }, {
+            id: 'filter-2',
+            label: 'Filter 2',
+            title: 'Second Filter'
+        }]
+    }
+};
+
+describe('InteractionUtils', () => {
+
+    describe('generateChartWidgetTreeNode', () => {
+        it('generates chart widget tree node with single chart', () => {
+            const tree = generateChartWidgetTreeNode(testWidgets.chartWidgetSingle);
+
+            expect(tree.type).toBe('collection');
+            expect(tree.id).toBe('chart-widget-single');
+            expect(tree.children.length).toBe(1);
+            expect(tree.children[0].id).toBe('charts');
+            expect(tree.children[0].staticallyNamedCollection).toBe(true);
+            expect(tree.children[0].children.length).toBe(1);
+            expect(tree.children[0].children[0].id).toBe('chart-1');
+            expect(tree.children[0].children[0].children.length).toBe(1);
+            expect(tree.children[0].children[0].children[0].id).toBe('traces');
+            expect(tree.children[0].children[0].children[0].children.length).toBe(3);
+            expect(tree.children[0].children[0].children[0].children[0].id).toBe('trace-1');
+            expect(tree.children[0].children[0].children[0].children[1].id).toBe('trace-2');
+            expect(tree.children[0].children[0].children[0].children[1].type).toBe('element');
+            expect(tree.children[0].children[0].children[0].children[2].id).toBe('trace-2');
+            expect(tree.children[0].children[0].children[0].children[2].type).toBe('collection');
+        });
+
+        it('adds apply dimension targets for trace date axes with current time availability metadata', () => {
+            const tree = generateRootTree([testWidgets.chartWidgetSingle]);
+            const tracesCollection = tree.children[0].children[0].children[0].children[0].children[0];
+            const trace = tracesCollection.children[2];
+            const xAxisCollection = trace.children[0];
+            const xAxisCurrentTimeNode = xAxisCollection.children[0];
+            const yAxisCollection = trace.children[1];
+            const yAxisCurrentTimeNode = yAxisCollection.children[0];
+
+            expect(xAxisCollection.id).toBe('xAxisOpts[x-axis-1]');
+            expect(xAxisCollection.title).toBe('X Axis');
+            expect(xAxisCurrentTimeNode.nodePath).toBe('widgets[chart-widget-single].charts[chart-1].traces[trace-2].xAxisOpts[x-axis-1].appliedCurrentTime');
+            expect(xAxisCurrentTimeNode.interactionMetadata.targets[0].targetType).toBe('applyDimension');
+            expect(xAxisCurrentTimeNode.interactionMetadata.targets[0].dimension).toBe('time');
+            expect(xAxisCurrentTimeNode.interactionMetadata.targets[0].showCurrentTimeEnabled).toBe(true);
+            expect(xAxisCurrentTimeNode.interactionMetadata.targets[0].dateType).toBe(true);
+            expect(yAxisCollection.id).toBe('yAxisOpts[0]');
+            expect(yAxisCurrentTimeNode.nodePath).toBe('widgets[chart-widget-single].charts[chart-1].traces[trace-2].yAxisOpts[0].appliedCurrentTime');
+            expect(yAxisCurrentTimeNode.interactionMetadata.targets[0].showCurrentTimeEnabled).toBe(false);
+            expect(yAxisCurrentTimeNode.interactionMetadata.targets[0].dateType).toBe(true);
+        });
+
+        it('builds apply dimension target paths for default axis id 0', () => {
+            const tree = generateRootTree([{
+                id: 'chart-widget-default-axis',
+                widgetType: 'chart',
+                charts: [{
+                    chartId: 'chart-1',
+                    traces: [{ id: 'trace-1', type: 'bar' }],
+                    xAxisOpts: [{ id: 0, type: 'date', showCurrentTime: true }]
+                }]
+            }]);
+            const currentTimeNode = tree.children[0]
+                .children[0]
+                .children[0]
+                .children[0]
+                .children[0]
+                .children[1]
+                .children[0]
+                .children[0];
+
+            expect(currentTimeNode.nodePath).toBe('widgets[chart-widget-default-axis].charts[chart-1].traces[trace-1].xAxisOpts[0].appliedCurrentTime');
+        });
+
+        it('does not add axis target nodes for pie traces', () => {
+            const tree = generateRootTree([{
+                id: 'chart-widget-pie-axis-options',
+                widgetType: 'chart',
+                charts: [{
+                    chartId: 'chart-1',
+                    traces: [{ id: 'trace-1', type: 'pie' }],
+                    xAxisOpts: [{ id: 0, type: 'date', showCurrentTime: true }],
+                    yAxisOpts: [{ id: 0, type: 'date', showCurrentTime: true }]
+                }]
+            }]);
+            const traces = tree.children[0]
+                .children[0]
+                .children[0]
+                .children[0]
+                .children[0]
+                .children;
+
+            expect(traces.length).toBe(1);
+            expect(traces[0].id).toBe('trace-1');
+            expect(traces[0].type).toBe('element');
+        });
+    });
+
+    describe('isChartAxisDimensionTarget', () => {
+        it('returns true for chart axis applied current time target node paths', () => {
+            expect(isChartAxisDimensionTarget('widgets[widget-1].charts[chart-1].xAxisOpts[x-axis-1].appliedCurrentTime')).toBe(true);
+            expect(isChartAxisDimensionTarget('widgets[widget-1].charts[chart-1].traces[trace-1].yAxisOpts[0].appliedCurrentTime')).toBe(true);
+        });
+
+        it('returns false for non chart-axis applied current time target node paths', () => {
+            expect(isChartAxisDimensionTarget('widgets[widget-1].charts[chart-1].traces[trace-1]')).toBe(false);
+            expect(isChartAxisDimensionTarget('map.time')).toBe(false);
+        });
+    });
+
+    describe('getChartAxisFromCurrentTimeTargetPath', () => {
+        it('returns the axis referenced by a trace axis current time target path', () => {
+            const axis = getChartAxisFromCurrentTimeTargetPath(
+                'widgets[widget-1].charts[chart-1].traces[trace-1].yAxisOpts[0].appliedCurrentTime',
+                [{
+                    id: 'widget-1',
+                    charts: [{
+                        chartId: 'chart-1',
+                        yAxisOpts: [{ id: 0, type: 'date', showCurrentTime: true }]
+                    }]
+                }]
+            );
+
+            expect(axis).toEqual({ id: 0, type: 'date', showCurrentTime: true });
+        });
+
+        it('returns the default axis when axis options are missing', () => {
+            const axis = getChartAxisFromCurrentTimeTargetPath(
+                'widgets[widget-1].charts[chart-1].traces[trace-1].xAxisOpts[0].appliedCurrentTime',
+                [{
+                    id: 'widget-1',
+                    charts: [{
+                        chartId: 'chart-1'
+                    }]
+                }]
+            );
+
+            expect(axis).toEqual({ id: 0 });
+        });
+    });
+
+    describe('isMapTimeTarget', () => {
+        it('returns true for a map.time target node path', () => {
+            expect(isMapTimeTarget('map.time')).toBe(true);
+        });
+
+        it('returns false for non-map-time targets', () => {
+            expect(isMapTimeTarget('map.layers[layer-1]')).toBe(false);
+            expect(isMapTimeTarget('widgets[foo].maps[bar].time')).toBe(false);
+        });
+    });
+
+    describe('isLayerDimensionTarget', () => {
+        it('returns true for layer time and elevation target node paths', () => {
+            expect(isLayerDimensionTarget('map.layers[layer-1].params.time')).toBe(true);
+            expect(isLayerDimensionTarget('map.layers[layer-1].params.elevation')).toBe(true);
+            expect(isLayerDimensionTarget('widgets[map-widget].maps[map-1].layers[layer-1].params.time')).toBe(true);
+            expect(isLayerDimensionTarget('widgets[map-widget].maps[map-1].layers[layer-1].params.elevation')).toBe(true);
+        });
+
+        it('returns false for non-layer-dimension targets', () => {
+            expect(isLayerDimensionTarget('map.time')).toBe(false);
+            expect(isLayerDimensionTarget('widgets[foo].maps[bar].time')).toBe(false);
+            expect(isLayerDimensionTarget('widgets[foo].params.time')).toBe(false);
+            expect(isLayerDimensionTarget('map.layers[layer-1]')).toBe(false);
+            expect(isLayerDimensionTarget('map.layers[layer-1].params.style')).toBe(false);
+        });
+    });
+
+    describe('isLayerTimeDimensionTarget', () => {
+        it('returns true for layer time target node paths', () => {
+            expect(isLayerTimeDimensionTarget('map.layers[layer-1].params.time')).toBe(true);
+            expect(isLayerTimeDimensionTarget('widgets[map-widget].maps[map-1].layers[layer-1].params.time')).toBe(true);
+        });
+
+        it('returns false for non-layer-time targets', () => {
+            expect(isLayerTimeDimensionTarget('map.layers[layer-1].params.elevation')).toBe(false);
+            expect(isLayerTimeDimensionTarget('map.time')).toBe(false);
+            expect(isLayerTimeDimensionTarget('widgets[foo].params.time')).toBe(false);
+        });
+    });
+
+    describe('generateTableWidgetTreeNode', () => {
+        it('generates table widget tree node with layer and interaction metadata', () => {
+            const tree = generateTableWidgetTreeNode(testWidgets.tableWidget);
+
+            expect(tree.type).toBe('element');
+            expect(tree.id).toBe('table-widget-1');
+            expect(tree.interactionMetadata !== undefined).toBe(true);
+            expect(tree.interactionMetadata.targets.length).toBeGreaterThan(0);
+            expect(tree.interactionMetadata.targets[0].constraints.layer.name).toBe('gs:table_layer');
+        });
+
+        it('handles table widget without layer gracefully', () => {
+            const tree = generateTableWidgetTreeNode({ id: 'table-widget-no-layer', widgetType: 'table' });
+            expect(tree.type).toBe('element');
+            expect(tree.interactionMetadata.targets[0].constraints.layer).toBe(null);
+        });
+    });
+
+    describe('generateCounterWidgetTreeNode', () => {
+        it('generates counter widget tree node with layer and interaction metadata', () => {
+            const tree = generateCounterWidgetTreeNode(testWidgets.counterWidget);
+
+            expect(tree.type).toBe('element');
+            expect(tree.id).toBe('counter-widget-1');
+            expect(tree.interactionMetadata !== undefined).toBe(true);
+            expect(tree.interactionMetadata.targets.length).toBeGreaterThan(0);
+            expect(tree.interactionMetadata.targets[0].constraints.layer.name).toBe('gs:counter_layer');
+        });
+
+        it('handles counter widget without layer gracefully', () => {
+            const tree = generateCounterWidgetTreeNode({ id: 'counter-widget-no-layer', widgetType: 'counter' });
+            expect(tree.type).toBe('element');
+            expect(tree.interactionMetadata.targets[0].constraints.layer).toBe(null);
+        });
+    });
+
+    describe('generateMapWidgetTreeNode', () => {
+        it('generates map widget tree node with maps collection', () => {
+            const tree = generateMapWidgetTreeNode(testWidgets.mapWidget);
+
+            expect(tree.type).toBe('collection');
+            expect(tree.id).toBe('map-widget-1');
+            expect(tree.children.length).toBe(1);
+            expect(tree.children[0].id).toBe('maps');
+        });
+
+
+        it('generates layer element and dimension collection for each supported layer', () => {
+            const layers = [{
+                name: 'layer-1',
+                id: 'layer-1',
+                type: 'wms',
+                group: 'overlay',
+                dimensions: [{
+                    name: 'time'
+                }]
+            }];
+
+            const tree = generateLayersMetadataTree(layers);
+
+            expect(tree.length).toBe(2);
+            expect(tree[0].type).toBe('element');
+            expect(tree[0].id).toBe('layer-1');
+            expect(tree[1].type).toBe('collection');
+            expect(tree[1].id).toBe('layer-1');
+            expect(tree[1].children.length).toBe(1);
+            expect(tree[1].children[0].type).toBe('element');
+            expect(tree[1].children[0].id).toBe('params.time');
+            expect(tree[1].children[0].title).toBe('Time');
+            expect(tree[1].children[0].interactionMetadata.targets[0].constraints).toEqual({});
+        });
+
+
+        it('filters dimension nodes by value attribute type', () => {
+            const tree = {
+                type: 'collection',
+                id: 'root',
+                children: [
+                    {
+                        type: 'element',
+                        id: 'foo',
+                        title: 'Foo'
+                    },
+                    {
+                        type: 'collection',
+                        id: 'layer-1',
+                        children: [
+                            {
+                                type: 'element',
+                                id: 'params.time',
+                                title: 'Time'
+                            },
+                            {
+                                type: 'element',
+                                id: 'params.elevation',
+                                title: 'Elevation'
+                            }
+                        ]
+                    }
+                ]
+            };
+
+            const dateTree = filterDimensionTreeByValueAttributeType(tree, 'date');
+            expect(dateTree.children[1].children.length).toBe(1);
+            expect(dateTree.children[1].children[0].id).toBe('params.time');
+
+            const numberTree = filterDimensionTreeByValueAttributeType(tree, 'number');
+            expect(numberTree.children[1].children.length).toBe(1);
+            expect(numberTree.children[1].children[0].id).toBe('params.elevation');
+
+            expect(filterDimensionTreeByValueAttributeType(tree, 'string')).toBe(null);
+        });
+
+        it('detects whether a layer has an allowed dimension target for a value attribute type', () => {
+            const layer = {
+                name: 'layer-1',
+                dimensions: [
+                    { name: 'time' },
+                    { name: 'elevation' }
+                ]
+            };
+
+            expect(hasAllowedDimensionTarget(layer, 'date')).toBe(true);
+            expect(hasAllowedDimensionTarget(layer, 'number')).toBe(true);
+            expect(hasAllowedDimensionTarget(layer, 'string')).toBe(false);
+        });
+
+        it('uses dot nodePath mode for dimension nodes under a layer', () => {
+            const rootNode = {
+                id: 'root',
+                type: 'collection',
+                staticallyNamedCollection: true,
+                children: [
+                    {
+                        id: 'widgets',
+                        type: 'collection',
+                        staticallyNamedCollection: true,
+                        children: [
+                            {
+                                id: 'map-widget-1',
+                                type: 'collection',
+                                children: [
+                                    {
+                                        id: 'maps',
+                                        type: 'collection',
+                                        staticallyNamedCollection: true,
+                                        children: [
+                                            {
+                                                id: 'map-1',
+                                                type: 'collection',
+                                                children: [
+                                                    {
+                                                        id: 'layers',
+                                                        type: 'collection',
+                                                        staticallyNamedCollection: true,
+                                                        children: [
+                                                            {
+                                                                id: 'layer-1',
+                                                                type: 'element',
+                                                                children: [
+                                                                    {
+                                                                        id: 'params.time',
+                                                                        type: 'element',
+                                                                        nodePathMode: 'dot'
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            };
+
+            const result = addNodePathToTree(rootNode);
+            const widgetsCollection = result.children[0];
+            const mapWidget = widgetsCollection.children[0];
+            const mapsCollection = mapWidget.children[0];
+            const mapCollection = mapsCollection.children[0];
+            const layersCollection = mapCollection.children[0];
+            const layerNode = layersCollection.children[0];
+            const timeNode = layerNode.children[0];
+
+            expect(timeNode.nodePath).toBe('widgets[map-widget-1].maps[map-1].layers[layer-1].params.time');
+        });
+    });
+
+    describe('generateDynamicFilterWidgetTreeNode', () => {
+        it('generates filter widget tree node with filters collection', () => {
+            const tree = generateDynamicFilterWidgetTreeNode(testWidgets.filterWidget);
+
+            expect(tree.type).toBe('collection');
+            expect(tree.id).toBe('filter-widget-1');
+            expect(tree.children.length).toBe(2);
+            expect(tree.children[0].id).toBe('filter-1');
+        });
+    });
+
+    describe('generateRootTree', () => {
+        it('generates root tree with all widget types', () => {
+            const widgets = [
+                {
+                    id: 'chart-widget-1',
+                    widgetType: 'chart',
+                    title: 'Chart Widget',
+                    charts: [{
+                        chartId: 'chart-1',
+                        traces: [{
+                            id: 'trace-1',
+                            type: 'pie',
+                            layer: { name: 'layer1' }
+                        }]
+                    }]
+                },
+                {
+                    id: 'table-widget-1',
+                    widgetType: 'table',
+                    title: 'Table Widget'
+                },
+                {
+                    id: 'counter-widget-1',
+                    widgetType: 'counter',
+                    title: 'Counter Widget'
+                }
+            ];
+
+            const rootTree = generateRootTree(widgets);
+
+            expect(rootTree.id).toBe('root');
+            expect(rootTree.children.length).toBe(1);
+
+            // Verify widgets collection
+            const widgetsCollection = rootTree.children[0];
+            expect(widgetsCollection.type).toBe('collection');
+            expect(widgetsCollection.id).toBe('widgets');
+            expect(widgetsCollection.children.length).toBe(3);
+
+            // Verify chart widget
+            const chartWidget = widgetsCollection.children[0];
+            expect(chartWidget.id).toBe('chart-widget-1');
+            expect(chartWidget.children.length).toBe(1);
+
+            // Verify table widget
+            const tableWidget = widgetsCollection.children[1];
+            expect(tableWidget.id).toBe('table-widget-1');
+            expect(tableWidget.type).toBe('element');
+
+            // Verify counter widget
+            const counterWidget = widgetsCollection.children[2];
+            expect(counterWidget.id).toBe('counter-widget-1');
+            expect(counterWidget.type).toBe('element');
+        });
+
+        it('places timeline and layer time at the root map level when a time layer exists', () => {
+            const rootTree = generateRootTree([], [{
+                name: 'layer-1',
+                id: 'layer-1',
+                type: 'wms',
+                group: 'overlay',
+                dimensions: [{
+                    name: 'time'
+                }]
+            }]);
+
+            const mapCollection = rootTree.children[1];
+
+            expect(mapCollection.id).toBe('map');
+            expect(mapCollection.children[0].id).toBe('time');
+            expect(mapCollection.children[0].title).toBe('Timeline');
+            expect(mapCollection.children[1].id).toBe('layers');
+            expect(mapCollection.children[1].children[1].children[0].id).toBe('params.time');
+        });
+    });
+
+    describe('filterTreeWithTarget', () => {
+        it('filters tree keeping only nodes with a given target', () => {
+            const sampleTree = {
+                type: 'element',
+                name: 'root',
+                children: [{
+                    type: 'collection',
+                    id: 'widgets',
+                    children: [{
+                        type: 'element',
+                        id: 'table-1',
+                        interactionMetadata: {
+                            targets: [{
+                                targetType: 'filterByViewport',
+                                expectedDataType: 'BBOX_COORDINATES'
+                            }]
+                        }
+                    }, {
+                        type: 'element',
+                        id: 'chart-1',
+                        interactionMetadata: {
+                            targets: [{
+                                targetType: 'applyFilter',
+                                expectedDataType: 'LAYER_FILTER'
+                            }]
+                        }
+                    }]
+                }]
+            };
+
+            const filtered = filterTreeWithTarget(sampleTree, { targetType: 'applyFilter' });
+            const widgetsCollection = filtered.children[0];
+
+            // eslint-disable-next-line no-console
+            console.log('FilterTreeWithTarget result', widgetsCollection);
+            expect(widgetsCollection.id).toBe('widgets');
+            expect(widgetsCollection.children.length).toBe(1);
+            expect(widgetsCollection.children[0].id).toBe('chart-1');
+        });
+    });
+
+
+    describe('detachSingleChildCollections', () => {
+        const widgetTree = {
+            type: "collection",
+            title: "",
+            id: "root",
+            staticallyNamedCollection: true,
+            children: [
+                {
+                    type: "collection",
+                    title: "Widgets",
+                    icon: "dashboard",
+                    id: "widgets",
+                    staticallyNamedCollection: true,
+                    children: [
+                        {
+                            type: "collection",
+                            title: "Chart",
+                            icon: "chart",
+                            id: "chart-widget-id",
+                            children: [
+                                {
+                                    type: "collection",
+                                    icon: "stats",
+                                    id: "chart-id",
+                                    children: [
+                                        {
+                                            type: "collection",
+                                            title: "Traces",
+                                            id: "traces",
+                                            staticallyNamedCollection: true,
+                                            children: [
+                                                {
+                                                    type: "element",
+                                                    title: "No title",
+                                                    icon: "stats",
+                                                    id: "trace-id",
+                                                    interactionMetadata: {
+                                                        events: [],
+                                                        targets: []
+                                                    },
+                                                    nodePath: "trace-node-path"
+                                                }
+                                            ],
+                                            nodePath: "trace-collection-node-path"
+                                        }
+                                    ],
+                                    nodePath: "chart-collection-node-path"
+                                }
+                            ],
+                            nodePath: "chart-widget-node-path"
+                        }
+                    ],
+                    nodePath: "widget-collection-node-path"
+                }
+            ],
+            nodePath: ""
+        };
+
+        it('should detach single-child collections by default', () => {
+            const result = detachSingleChildCollections(widgetTree);
+
+            expect(result.children.length).toBe(1);
+            expect(result.children[0].id).toBe('trace-id');
+            expect(result.children[0].nodePath).toBe('trace-node-path');
+
+        });
+
+        it('should not detach collections when excluded via excludeChecksOn', () => {
+            const result = detachSingleChildCollections(widgetTree, ['widgets', 'traces']);
+            const widgetCollection = result.children[0];
+            expect(widgetCollection?.id ).toBe('widgets');
+            expect(widgetCollection.nodePath).toBe("widget-collection-node-path");
+
+            const tracesCollection = widgetCollection?.children[0];
+            expect(tracesCollection?.id).toBe('traces');
+            expect(tracesCollection.nodePath).toBe('trace-collection-node-path');
+        });
+
+        it('should preserve flagged layer dimension collections when they are the only child', () => {
+            const tree = {
+                type: 'collection',
+                id: 'root',
+                children: [{
+                    type: 'collection',
+                    id: 'layers',
+                    children: [{
+                        type: 'collection',
+                        id: 'layer-1',
+                        preserveWhenSingleChild: true,
+                        children: [{
+                            type: 'element',
+                            id: 'elevation'
+                        }]
+                    }]
+                }]
+            };
+
+            const result = detachSingleChildCollections(tree);
+            expect(result.children[0].id).toBe('layer-1');
+            expect(result.children[0].children[0].id).toBe('elevation');
+        });
+    });
+
+    describe('getDisplayInteractionTargetTree and hasConnectableTargetNodes', () => {
+        const interactionTree = {
+            type: 'collection',
+            id: 'root',
+            children: [{
+                type: 'collection',
+                id: 'widgets',
+                children: [{
+                    type: 'element',
+                    id: 'chart-1',
+                    interactionMetadata: {
+                        targets: [{
+                            targetType: 'applyFilter'
+                        }]
+                    }
+                }]
+            }, {
+                type: 'collection',
+                id: 'map',
+                children: [{
+                    type: 'collection',
+                    id: 'layers',
+                    children: [{
+                        type: 'element',
+                        id: 'elevation',
+                        interactionMetadata: {
+                            targets: [{
+                                targetType: 'applyDimension',
+                                constraints: {
+                                    dimension: {
+                                        name: 'elevation',
+                                        valueAttributeTypes: ['number']
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }]
+            }]
+        };
+
+        it('should return a display tree for normal target types', () => {
+            const result = getDisplayInteractionTargetTree(interactionTree, { targetType: 'applyFilter' });
+
+            expect(result.children.length).toBe(1);
+            expect(result.children[0].id).toBe('widgets');
+            expect(result.children[0].children[0].id).toBe('chart-1');
+            expect(hasConnectableTargetNodes(interactionTree, { targetType: 'applyFilter' })).toBe(true);
+        });
+
+        it('should filter apply dimension targets by value attribute type', () => {
+            const target = { targetType: 'applyDimension' };
+
+            expect(hasConnectableTargetNodes(interactionTree, target, 'number')).toBe(true);
+            expect(hasConnectableTargetNodes(interactionTree, target, 'string')).toBe(false);
+        });
+    });
+
+    describe('map zoomTo node structure', () => {
+        const mapZoomLayers = [{
+            name: 'layer-1',
+            id: 'layer-1',
+            type: 'wms',
+            group: 'overlay'
+        }];
+
+        it('exposes the zoom-to target under the map collection in the root tree', () => {
+            const rootTree = generateRootTree([], mapZoomLayers);
+            const mapCollection = rootTree.children[1];
+
+            expect(mapCollection.id).toBe('map');
+            const zoomNode = (mapCollection.children || []).find(child => child.id === TARGET_TYPES.APPLY_ZOOM_TO);
+            expect(zoomNode).toExist();
+            expect(zoomNode.type).toBe('element');
+            expect(zoomNode.nodePath).toBe('map.applyZoomTo');
+            expect(mapCollection.children[0].id).toBe('layers');
+        });
+
+        it('renders the zoomTo action directly on the Map node (no nested "Zoom to" child leaf)', () => {
+            const rootTree = generateRootTree([], mapZoomLayers);
+            const display = getDisplayInteractionTargetTree(rootTree, { targetType: TARGET_TYPES.APPLY_ZOOM_TO });
+
+            expect(display.children.length).toBe(1);
+            const mapNode = display.children[0];
+            // The map wrapper collection is collapsed into the zoomTo element itself.
+            expect(mapNode.type).toBe('element');
+            expect(mapNode.title).toBe('Map');
+            expect(mapNode.nodePath).toBe('map.applyZoomTo');
+            expect(mapNode.interactionMetadata).toExist();
+            // No child leaf node should be rendered for the zoomTo action.
+            expect(mapNode.children).toNotExist();
+        });
+
+        it('keeps the map collection intact for non-zoomTo target types', () => {
+            const rootTree = generateRootTree([], mapZoomLayers);
+            const display = getDisplayInteractionTargetTree(rootTree, { targetType: TARGET_TYPES.APPLY_FILTER });
+            const mapNode = display.children.find(child => child.id === 'map');
+
+            expect(mapNode).toExist();
+            expect(mapNode.type).toBe('collection');
+        });
+
+        it('generates zoomTo leaf node when map layers are present', () => {
+            const rootTree = generateRootTree([], mapZoomLayers);
+            const mapNode = rootTree.children.find(child => child.id === 'map');
+            const zoomToNode = mapNode.children.find(child => child.id === TARGET_TYPES.APPLY_ZOOM_TO);
+
+            expect(zoomToNode).toExist();
+            expect(zoomToNode.type).toBe('element');
+            expect(zoomToNode.interactionMetadata.targets[0].targetType).toBe(TARGET_TYPES.APPLY_ZOOM_TO);
+        });
+    });
+
+    describe('promoteMapZoomToNodes', () => {
+        it('collapses a map wrapper collection whose only child is the zoom-to element', () => {
+            const tree = {
+                type: 'collection',
+                id: 'root',
+                children: [{
+                    type: 'collection',
+                    id: 'map',
+                    title: 'Map',
+                    icon: '1-map',
+                    children: [{
+                        type: 'element',
+                        id: TARGET_TYPES.APPLY_ZOOM_TO,
+                        title: 'Zoom to',
+                        icon: 'zoom-to',
+                        nodePath: 'map.applyZoomTo',
+                        interactionMetadata: { targets: [{ targetType: TARGET_TYPES.APPLY_ZOOM_TO }] }
+                    }]
+                }]
+            };
+
+            const result = promoteMapZoomToNodes(tree);
+            const mapNode = result.children[0];
+
+            expect(mapNode.type).toBe('element');
+            expect(mapNode.id).toBe(TARGET_TYPES.APPLY_ZOOM_TO);
+            expect(mapNode.title).toBe('Map');
+            expect(mapNode.icon).toBe('1-map');
+            expect(mapNode.nodePath).toBe('map.applyZoomTo');
+            expect(mapNode.children).toNotExist();
+        });
+
+        it('leaves collections with additional children untouched', () => {
+            const tree = {
+                type: 'collection',
+                id: 'map',
+                title: 'Map',
+                children: [{
+                    type: 'element',
+                    id: 'zoomTo',
+                    interactionMetadata: { targets: [{ targetType: TARGET_TYPES.APPLY_ZOOM_TO }] }
+                }, {
+                    type: 'element',
+                    id: 'time'
+                }]
+            };
+
+            const result = promoteMapZoomToNodes(tree);
+
+            expect(result.type).toBe('collection');
+            expect(result.children.length).toBe(2);
+        });
+    });
+
+    describe('addNodePathToTree', () => {
+        it('should build paths for nested elements and collections', () => {
+            const rootNode = {
+                id: 'root',
+                type: 'collection',
+                staticallyNamedCollection: true,
+                children: [
+                    {
+                        id: 'widgets',
+                        type: 'collection',
+                        staticallyNamedCollection: true,
+                        children: [
+                            {
+                                id: 'widget-1',
+                                type: 'element',
+                                children: [
+                                    {
+                                        id: 'traces',
+                                        type: 'collection',
+                                        staticallyNamedCollection: true,
+                                        children: [
+                                            {
+                                                id: 'trace-1',
+                                                type: 'element'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        id: 'map',
+                        type: 'collection',
+                        staticallyNamedCollection: true,
+                        children: [
+                            {
+                                id: 'layers',
+                                type: 'collection',
+                                staticallyNamedCollection: true,
+                                children: [
+                                    {
+                                        id: 'layer-1',
+                                        type: 'element'
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            };
+            const result = addNodePathToTree(rootNode);
+            expect(result.nodePath).toBe('');
+            expect(result.children[0].nodePath).toBe('widgets');
+            expect(result.children[0].children[0].nodePath).toBe('widgets[widget-1]');
+            expect(result.children[0].children[0].children[0].nodePath).toBe('widgets[widget-1].traces');
+            expect(result.children[0].children[0].children[0].children[0].nodePath).toBe('widgets[widget-1].traces[trace-1]');
+            expect(result.children[1].nodePath).toBe('map');
+            expect(result.children[1].children[0].nodePath).toBe('map.layers');
+            expect(result.children[1].children[0].children[0].nodePath).toBe('map.layers[layer-1]');
+        });
+    });
+
+    describe('createLayerConstraint', () => {
+        it('returns layer constraint object with name and title from layer title', () => {
+            const layer = { name: 'gs:states', title: 'US States' };
+            const result = createLayerConstraint(layer);
+            expect(result).toEqual({ name: 'gs:states', title: 'US States' });
+        });
+
+        it('falls back to layer name as title when layer title is missing', () => {
+            const layer = { name: 'gs:states' };
+            const result = createLayerConstraint(layer);
+            expect(result).toEqual({ name: 'gs:states', title: 'gs:states' });
+        });
+
+        it('returns null when layer is falsy or undefined', () => {
+            expect(createLayerConstraint(undefined)).toBe(null);
+            expect(createLayerConstraint(null)).toBe(null);
+        });
+    });
+
+    describe('generateLayerMetadataTree', () => {
+        it('generates layer metadata tree with constraint layer when layer is provided', () => {
+            const layer = { name: 'layer-1', title: 'Layer One' };
+            const node = generateLayerMetadataTree(layer);
+            expect(node.type).toBe('element');
+            expect(node.interactionMetadata.targets[0].constraints.layer).toEqual({
+                name: 'layer-1',
+                title: 'Layer One'
+            });
+        });
+
+        it('handles undefined layer gracefully without throwing', () => {
+            const node = generateLayerMetadataTree(undefined);
+            expect(node.type).toBe('element');
+            expect(node.interactionMetadata.targets[0].constraints.layer).toBe(null);
+        });
+    });
+
+    describe('getConnectedActiveTargets', () => {
+        const sampleInteractions = [
+            {
+                id: 'int-1',
+                plugged: true,
+                target: {
+                    nodePath: 'widgets[map-1].layers[layer-1]',
+                    metaData: {
+                        constraints: {
+                            layer: { name: 'layer-1', title: 'Layer One Title' }
+                        }
+                    }
+                }
+            },
+            {
+                id: 'int-2',
+                plugged: true,
+                target: {
+                    nodePath: 'widgets[map-1].layers[layer-2]',
+                    metaData: {
+                        constraints: {
+                            layer: { name: 'layer-2', title: { 'en-US': 'Layer Two EN', "default": 'Layer Two Def' } }
+                        }
+                    }
+                }
+            },
+            {
+                id: 'int-3',
+                plugged: false,
+                target: {
+                    nodePath: 'widgets[map-1].layers[layer-3]',
+                    metaData: {
+                        constraints: {
+                            layer: { name: 'layer-3', title: 'Layer Three' }
+                        }
+                    }
+                }
+            }
+        ];
+
+        it('returns active target paths when asLayerTitles is false', () => {
+            const activeTargets = {
+                'widgets[map-1].layers[layer-1]': true,
+                'widgets[map-1].layers[layer-2]': false
+            };
+            const result = getConnectedActiveTargets({
+                interactions: sampleInteractions,
+                activeTargets,
+                asLayerTitles: false
+            });
+            expect(result).toEqual(['widgets[map-1].layers[layer-1]']);
+        });
+
+        it('returns layer titles when asLayerTitles is true', () => {
+            const activeTargets = {
+                'widgets[map-1].layers[layer-1]': true,
+                'widgets[map-1].layers[layer-2]': true
+            };
+            const result = getConnectedActiveTargets({
+                interactions: sampleInteractions,
+                activeTargets,
+                locale: 'en-US',
+                asLayerTitles: true
+            });
+            expect(result).toEqual(['Layer One Title', 'Layer Two EN']);
+        });
+
+        it('respects inactiveInteractionIds when withDisabledFilter is false', () => {
+            const activeTargets = {
+                'widgets[map-1].layers[layer-1]': true,
+                'widgets[map-1].layers[layer-2]': true
+            };
+            const result = getConnectedActiveTargets({
+                interactions: sampleInteractions,
+                activeTargets,
+                inactiveInteractionIds: ['int-1'],
+                asLayerTitles: false
+            });
+            expect(result).toEqual(['widgets[map-1].layers[layer-2]']);
+        });
+
+        it('includes inactive interactions when withDisabledFilter is true and targetsWithDisabledFilter matches', () => {
+            const activeTargets = {
+                'widgets[map-1].layers[layer-1]': true
+            };
+            const targetsWithDisabledFilter = {
+                'widgets[map-1].layers[layer-1]': true
+            };
+            const result = getConnectedActiveTargets({
+                interactions: sampleInteractions,
+                activeTargets,
+                inactiveInteractionIds: ['int-1'],
+                targetsWithDisabledFilter,
+                withDisabledFilter: true,
+                asLayerTitles: false
+            });
+            expect(result).toEqual(['widgets[map-1].layers[layer-1]']);
+        });
+    });
+    describe('findAllApplyFiltersForZoomTo', () => {
+        const sourcePath = 'widgets[filter-widget].filters[filter-1]';
+        const zoomMainMap = {
+            source: { nodePath: sourcePath },
+            target: { nodePath: 'map.applyZoomTo' },
+            targetType: TARGET_TYPES.APPLY_ZOOM_TO
+        };
+        const zoomWidgetMap = {
+            source: { nodePath: sourcePath },
+            target: { nodePath: 'widgets[map-widget].maps[map-1].zoomTo' },
+            targetType: TARGET_TYPES.APPLY_ZOOM_TO
+        };
+
+        const siblingInteractions = [
+            {
+                id: '1',
+                plugged: true,
+                source: { nodePath: sourcePath },
+                target: { nodePath: 'map.layers[layer-1]' },
+                targetType: TARGET_TYPES.APPLY_FILTER
+            },
+            {
+                id: '2',
+                plugged: true,
+                source: { nodePath: sourcePath },
+                target: { nodePath: 'widgets[map-widget].maps[map-1].layers[layer-1]' },
+                targetType: TARGET_TYPES.APPLY_FILTER
+            },
+            {
+                id: '3',
+                plugged: false,
+                source: { nodePath: sourcePath },
+                target: { nodePath: 'map.layers[layer-2]' },
+                targetType: TARGET_TYPES.APPLY_FILTER
+            },
+            {
+                id: '4',
+                plugged: true,
+                source: { nodePath: 'widgets[other-filter].filters[f-1]' },
+                target: { nodePath: 'map.layers[layer-3]' },
+                targetType: TARGET_TYPES.APPLY_FILTER
+            },
+            {
+                id: '5',
+                plugged: true,
+                source: { nodePath: sourcePath },
+                target: { nodePath: 'widgets[table-widget]' },
+                targetType: TARGET_TYPES.APPLY_FILTER
+            }
+        ];
+
+        it('finds plugged applyFilter layers for main map zoomTo', () => {
+            const result = findAllApplyFiltersForZoomTo(zoomMainMap, siblingInteractions);
+            expect(result.length).toBe(1);
+            expect(result[0].id).toBe('1');
+        });
+
+        it('finds plugged applyFilter layers for widget map zoomTo', () => {
+            const result = findAllApplyFiltersForZoomTo(zoomWidgetMap, siblingInteractions);
+            expect(result.length).toBe(1);
+            expect(result[0].id).toBe('2');
+        });
+    });
+
+    describe('findNodeById', () => {
+        it('returns null if tree or nodeId is empty', () => {
+            expect(findNodeById(null, 'id-1')).toBe(null);
+            expect(findNodeById({}, null)).toBe(null);
+        });
+
+        it('returns node matching id', () => {
+            const tree = {
+                id: 'root',
+                children: [
+                    { id: 'child-1' },
+                    { id: 'child-2' }
+                ]
+            };
+            const result = findNodeById(tree, 'child-2');
+            expect(result).toExist();
+            expect(result.id).toBe('child-2');
+        });
+
+        it('returns node matching nodePath', () => {
+            const tree = {
+                id: 'root',
+                children: [
+                    { id: '1', nodePath: 'map.layers[layer-1]' },
+                    { id: '2', nodePath: 'widgets[widget-1]' }
+                ]
+            };
+            const result = findNodeById(tree, 'widgets[widget-1]');
+            expect(result).toExist();
+            expect(result.id).toBe('2');
+        });
+
+        it('returns null if node is not found', () => {
+            const tree = {
+                id: 'root',
+                children: [
+                    { id: '1' }
+                ]
+            };
+            expect(findNodeById(tree, 'non-existent')).toBe(null);
+        });
+    });
+
+});
+

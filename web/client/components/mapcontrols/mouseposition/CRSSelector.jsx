@@ -1,0 +1,145 @@
+/*
+ * Copyright 2017, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import PropTypes from 'prop-types';
+import React, { useRef } from 'react';
+import { ControlLabel, FormControl, FormGroup } from 'react-bootstrap';
+import ReactDOM from 'react-dom';
+
+import { filterCRSList, getAvailableCRS } from '../../../utils/CoordinatesUtils';
+import { getAvailableProjectionsFromConfig } from '../../../utils/ProjectionUtils';
+import FlexBox from '../../layout/FlexBox';
+
+/**
+ * CRSSelector allows to select a crs from a combobox or using a raw input.
+ * @memberof components.mousePosition
+ * @class
+ * @prop {string} id the id of the component
+ * @prop {string|object|function} label the label shown next to the combobox (if editCRS is true)
+ * @prop {object} availableCRS list of available crs to be used in the combobox
+ * @prop {object[]} availableProjections list of CRS entries with `{ value, label }` format
+ * @prop {string[]} filterAllowedCRS list of allowed crs in the combobox list
+ * @prop {object[]} projectionDefs list of additional project definitions
+ * @prop {object} additionalCRS additional crs to be added to the list
+ * @prop {string} crs the current selected crs
+ * @prop {boolean} enabled if true shows the component
+ * @prop {function} onCRSChange callback when a new crs is selected
+ * @prop {boolean} useRawInput if true shows a raw input instead of a combobox
+ */
+
+const CRSSelector = (props) => {
+    const {
+        id,
+        label,
+        availableCRS,
+        availableProjections,
+        filterAllowedCRS,
+        projectionDefs,
+        additionalCRS,
+        crs,
+        enabled,
+        onCRSChange,
+        useRawInput
+    } = props;
+
+    const formRef = useRef(null);
+
+    const launchNewCRSAction = (ev) => {
+        if (useRawInput) {
+            onCRSChange(ev.target.value);
+        } else {
+            const element = ReactDOM.findDOMNode(formRef.current);
+            const selectNode = element.getElementsByTagName('select').item(0);
+            onCRSChange(selectNode.value);
+        }
+    };
+
+    if (!enabled) {
+        return null;
+    }
+
+    const resolvedAvailableProjections = availableProjections
+        || getAvailableProjectionsFromConfig(filterAllowedCRS, additionalCRS);
+
+    const filteredCRS = Object.keys(availableCRS).length
+        ? filterCRSList(availableCRS, filterAllowedCRS, additionalCRS, projectionDefs)
+        : {};
+
+    const options = resolvedAvailableProjections.length
+        ? resolvedAvailableProjections.map(({ value, label: projectionLabel }) => (
+            <option value={value} key={value}>{projectionLabel}</option>
+        ))
+        : Object.entries(filteredCRS).map(([crsKey, crsValue]) => (
+            <option value={crsKey} key={crsKey}>{crsValue.label}</option>
+        ));
+
+    if (useRawInput) {
+        return (
+            <select
+                id={id}
+                value={crs}
+                onChange={launchNewCRSAction}
+                bsSize="small"
+            >
+                {options}
+            </select>
+        );
+    }
+
+    return (
+        <FlexBox
+            ref={formRef}
+            component={FormGroup}
+            centerChildrenVertically
+            gap="sm"
+        >
+            <ControlLabel className="selector-label">
+                {label}
+            </ControlLabel>
+            <FormControl
+                componentClass="select"
+                id={id}
+                value={crs}
+                onChange={launchNewCRSAction}
+                bsSize="small"
+                className="selector-control"
+            >
+                {options}
+            </FormControl>
+        </FlexBox>
+    );
+};
+
+CRSSelector.propTypes = {
+    id: PropTypes.string,
+    label: PropTypes.oneOfType([PropTypes.func, PropTypes.string, PropTypes.object]),
+    availableCRS: PropTypes.object,
+    availableProjections: PropTypes.array,
+    filterAllowedCRS: PropTypes.array,
+    projectionDefs: PropTypes.array,
+    additionalCRS: PropTypes.object,
+    crs: PropTypes.string,
+    enabled: PropTypes.bool,
+    onCRSChange: PropTypes.func,
+    useRawInput: PropTypes.bool
+};
+
+CRSSelector.defaultProps = {
+    id: "mapstore-crsselector",
+    availableCRS: getAvailableCRS(),
+    availableProjections: null,
+    filterAllowedCRS: ['EPSG:4326', 'EPSG:3857'],
+    additionalCRS: {},
+    projectionDefs: [],
+    crs: null,
+    onCRSChange: function() {},
+    enabled: false,
+    useRawInput: false
+};
+
+export default CRSSelector;

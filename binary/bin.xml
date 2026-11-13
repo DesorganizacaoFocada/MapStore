@@ -1,0 +1,96 @@
+<assembly>
+  <id>bin</id>
+  <formats>
+    <format>zip</format>
+  </formats>
+  <includeBaseDirectory>false</includeBaseDirectory>
+  <!-- main webapp (war built by bin-war module) -->
+  <fileSets>
+    <!-- NOTE: we keep fileSets for other files (jre, libs, scripts, tomcat conf, logs, work) -->
+    <fileSet>
+      <!-- the main webapp (relative to bin-war module where assembly will run) -->
+      <directory>target/</directory>
+      <outputDirectory>mapstore2/webapps/</outputDirectory>
+      <includes>
+        <include>mapstore.war</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <!-- JRE's -->
+      <directory>../target/jre</directory>
+      <outputDirectory>mapstore2/jre</outputDirectory>
+      <includes>
+        <include>**/*</include>
+      </includes>
+      <excludes>
+        <exclude>linux/bin/**</exclude>
+        <exclude>linux/lib/jexec</exclude>
+        <exclude>linux/lib/jspawnhelper</exclude>
+      </excludes>
+    </fileSet>
+    <fileSet>
+      <directory>../target/jre/linux/bin</directory>
+      <outputDirectory>mapstore2/jre/linux/bin</outputDirectory>
+      <includes><include>**/*</include></includes>
+      <fileMode>0755</fileMode>
+      <directoryMode>0755</directoryMode>
+    </fileSet>
+    <fileSet>
+      <directory>../target/jre/linux/lib</directory>
+      <outputDirectory>mapstore2/jre/linux/lib</outputDirectory>
+      <includes>
+        <include>jexec</include>
+        <include>jspawnhelper</include>
+      </includes>
+      <fileMode>0755</fileMode>
+      <directoryMode>0755</directoryMode>
+    </fileSet>
+    <fileSet>
+      <!-- the libs needed to run tomcat (copied by dependency plugin into target/dependency) -->
+      <directory>../target/dependency</directory>
+      <outputDirectory>mapstore2/lib</outputDirectory>
+      <includes>
+        <include>tomcat-*.jar</include>
+        <include>ecj-*.jar</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <!-- windows batch files (stored in binary/bin) -->
+      <directory>../bin</directory>
+      <lineEnding>keep</lineEnding>
+      <outputDirectory>mapstore2/</outputDirectory>
+      <includes>
+        <include>mapstore2-*.bat</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <!-- unix shell scripts (stored in binary/bin) -->
+      <directory>../bin</directory>
+      <lineEnding>unix</lineEnding>
+      <outputDirectory>mapstore2/</outputDirectory>
+      <fileMode>0755</fileMode>
+      <directoryMode>0755</directoryMode>
+      <includes>
+        <include>mapstore2-*.sh</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <!-- tomcat configuration (stored in binary/tomcat) -->
+      <directory>../tomcat</directory>
+      <outputDirectory>mapstore2</outputDirectory>
+      <includes>
+        <include>**/*</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <!-- empty log directory (in binary/logs) -->
+      <directory>../logs</directory>
+      <outputDirectory>mapstore2</outputDirectory>
+    </fileSet>
+    <fileSet>
+      <!-- empty work directory (in binary/work) -->
+      <directory>../work</directory>
+      <outputDirectory>mapstore2</outputDirectory>
+    </fileSet>
+  </fileSets>
+</assembly>

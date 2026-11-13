@@ -1,0 +1,70 @@
+//
+// Copyright 2021, GeoSolutions Sas.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
+//
+
+// **************
+// Theme
+// **************
+
+// #ms-components-theme(@theme-vars) {}
+
+// **************
+// Layout
+// **************
+.square-button-md, // deprecated fallback for retro compatibility
+.square-button-sm, // deprecated fallback for retro compatibility
+.square-button {
+    // !important due to vertical btn-group eg. dashboard
+    &.input-group-addon {
+        display: flex;
+    }
+    &, .btn-group-vertical & {
+        height: @square-btn-size;
+        width: @square-btn-size;
+        padding: 0;
+        outline: 0;
+    }
+    .fa,
+    .glyphicon {
+        margin: auto;
+        font-size: @icon-size;
+    }
+    .ms-loader {
+        height: @icon-size;
+        width: @icon-size;
+        margin: auto;
+        > div {
+            margin: auto;
+            .mapstore-circle-loader-with-css-variables(@icon-size/10, @icon-size);
+        }
+    }
+
+    // TODO: check and remove all the above rules
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    font-size: @icon-size;
+}
+
+.btn-group-vertical > .square-button {
+    width: @square-btn-size;
+}
+
+.dropdown.btn-group > .square-button+button.dropdown-toggle {
+    height: @square-btn-size;
+    padding: 2px;
+}
+
+#mapstore-map-footer {
+    .square-button {
+        width: 22px;
+        height: 22px;
+        .glyphicon {
+            font-size: 12px;
+        }
+    }
+}

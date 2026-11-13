@@ -1,0 +1,106 @@
+/*
+ * Copyright 2017, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import expect from 'expect';
+import React from 'react';
+import ReactDOM from 'react-dom';
+import ReactTestUtils from 'react-dom/test-utils';
+
+import WidgetsBar from '../WidgetsBar';
+
+describe('WidgetsBar component', () => {
+    beforeEach((done) => {
+        document.body.innerHTML = '<div id="container"></div>';
+        setTimeout(done);
+    });
+    afterEach((done) => {
+        ReactDOM.unmountComponentAtNode(document.getElementById("container"));
+        document.body.innerHTML = '';
+        setTimeout(done);
+    });
+    it('WidgetsBar rendering with defaults', () => {
+        ReactDOM.render(<WidgetsBar />, document.getElementById("container"));
+        const container = document.getElementById('container');
+        const el = container.querySelector('.widgets-bar');
+        expect(el).toExist();
+    });
+    it('WidgetsBar rendering widgets', () => {
+        ReactDOM.render(<WidgetsBar widgets={[{type: "unknown"}]} />, document.getElementById("container"));
+        const container = document.getElementById('container');
+        const el = container.querySelector('.btn-group button');
+        expect(el).toExist();
+    });
+    it('WidgetsBar rendering icons', () => {
+        // charts
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "chart" }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-chart')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ charts: [{type: "pie"}] }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-pie-chart')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ charts: [{type: "line"}] }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-1-line')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ charts: [{type: "bar"}] }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-bar-chart')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ charts: [{type: "counter"}] }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-counter')).toExist();
+
+        // other widgets
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "text" }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-sheet')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "table" }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-features-grid')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "counter" }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-counter')).toExist();
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "map" }]} />, document.getElementById("container"));
+        expect(document.getElementById('container').querySelector('.glyphicon-1-map')).toExist();
+    });
+    it('Test WidgetsBar onClick', () => {
+        const actions = {
+            onClick: () => {}
+        };
+        const spyonClick = expect.spyOn(actions, 'onClick');
+        ReactDOM.render(<WidgetsBar widgets={[{ widgetType: "text" }]} onClick={actions.onClick} />, document.getElementById("container"));
+        const container = document.getElementById('container');
+        const el = container.querySelector('.btn-group button');
+        ReactTestUtils.Simulate.click(el); // <-- trigger event callback
+        expect(spyonClick).toHaveBeenCalled();
+    });
+    it('Test WidgetsBar rendering with active filter style', () => {
+        const widget = {
+            widgetType: "filter",
+            filters: [{ id: 'f1', disabled: false }],
+            selections: { f1: ['value1'] }
+        };
+        ReactDOM.render(<WidgetsBar widgets={[widget]} />, document.getElementById("container"));
+        const el = document.getElementById('container').querySelector('.btn-group button');
+        expect(el.className).toInclude('ms-notification-circle');
+        expect(el.className).toInclude('success');
+    });
+    it('Test WidgetsBar rendering without active filter style if filter is disabled', () => {
+        const widgetDisabled = {
+            widgetType: "filter",
+            filters: [{ id: 'f1', disabled: true }],
+            selections: { f1: ['value1'] }
+        };
+        ReactDOM.render(<WidgetsBar widgets={[widgetDisabled]} />, document.getElementById("container"));
+        const el = document.getElementById('container').querySelector('.btn-group button');
+        expect(el.className).toNotInclude('ms-notification-circle');
+        expect(el.className).toNotInclude('success');
+    });
+
+    it('Test WidgetsBar rendering without active filter style if no selections', () => {
+        const widgetNoSelection = {
+            widgetType: "filter",
+            filters: [{ id: 'f1', disabled: false }],
+            selections: { f1: [] }
+        };
+        ReactDOM.render(<WidgetsBar widgets={[widgetNoSelection]} />, document.getElementById("container"));
+        const el = document.getElementById('container').querySelector('.btn-group button');
+        expect(el.className).toNotInclude('ms-notification-circle');
+        expect(el.className).toNotInclude('success');
+    });
+});

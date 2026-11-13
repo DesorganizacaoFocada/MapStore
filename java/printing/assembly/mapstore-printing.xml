@@ -1,0 +1,51 @@
+<assembly xmlns="http://maven.apache.org/plugins/maven-assembly-plugin/assembly/1.1.2"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/plugins/maven-assembly-plugin/assembly/1.1.2 http://maven.apache.org/xsd/assembly-1.1.2.xsd">
+    <id>zip</id>
+    <includeBaseDirectory>false</includeBaseDirectory>
+
+    <formats>
+        <format>zip</format>
+    </formats>
+    <fileSets>
+        <fileSet>
+            <outputDirectory>/WEB-INF</outputDirectory>
+            <directory>${project.build.directory}/mapstore-printing/WEB-INF</directory>
+            <includes>
+                <include>**/*.xml</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+    <!--
+        print-lib and its runtime dependencies, except the libraries the MapStore WAR already ships:
+        the bundle is unpacked over an existing MapStore and must not add a second version of them
+    -->
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>/WEB-INF/lib</outputDirectory>
+            <!-- same file names as in the WAR (-SNAPSHOT instead of the timestamped version) -->
+            <outputFileNameMapping>${artifact.artifactId}-${artifact.baseVersion}${dashClassifier?}.${artifact.extension}</outputFileNameMapping>
+            <useProjectArtifact>false</useProjectArtifact>
+            <scope>runtime</scope>
+            <excludes>
+                <exclude>com.fasterxml.jackson.core:*</exclude>
+                <exclude>com.google.code.findbugs:*</exclude>
+                <exclude>com.google.errorprone:*</exclude>
+                <exclude>com.google.guava:*</exclude>
+                <exclude>com.google.j2objc:*</exclude>
+                <exclude>commons-io:*</exclude>
+                <exclude>commons-logging:*</exclude>
+                <exclude>io.micrometer:*</exclude>
+                <exclude>jakarta.activation:*</exclude>
+                <exclude>jakarta.annotation:*</exclude>
+                <exclude>jakarta.inject:*</exclude>
+                <exclude>org.apache.commons:commons-lang3</exclude>
+                <exclude>org.apache.commons:commons-text</exclude>
+                <exclude>org.apache.logging.log4j:*</exclude>
+                <exclude>org.jspecify:*</exclude>
+                <exclude>org.slf4j:*</exclude>
+                <exclude>org.springframework:*</exclude>
+            </excludes>
+        </dependencySet>
+    </dependencySets>
+</assembly>

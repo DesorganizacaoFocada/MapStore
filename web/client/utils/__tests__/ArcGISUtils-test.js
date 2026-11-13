@@ -1,0 +1,241 @@
+/*
+ * Copyright 2024, GeoSolutions Sas.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+import expect from 'expect';
+
+import {
+    isImageServerUrl,
+    isMapServerUrl,
+    isFeatureServerUrl,
+    getLayerIds,
+    getQueryLayerIds,
+    esriToGeoJSONFeature,
+    esriGeometryTypeToGeoJSON,
+    esriFieldTypeToPrimitive,
+    esriFieldsToAttributes
+} from '../ArcGISUtils';
+
+const layers = [
+    {
+        id: 0,
+        parentLayerId: -1,
+        subLayerIds: [1, 6, 7]
+    },
+    {
+        id: 1,
+        parentLayerId: 0,
+        subLayerIds: [
+            2,
+            3,
+            4,
+            5
+        ]
+    },
+    {
+        id: 2,
+        parentLayerId: 1,
+        subLayerIds: null
+    },
+    {
+        id: 3,
+        parentLayerId: 1,
+        subLayerIds: null
+    },
+    {
+        id: 4,
+        parentLayerId: 1,
+        subLayerIds: null
+    },
+    {
+        id: 5,
+        parentLayerId: 1,
+        subLayerIds: null
+    },
+    {
+        id: 6,
+        parentLayerId: 0,
+        subLayerIds: null
+    },
+    {
+        id: 7,
+        parentLayerId: 0,
+        subLayerIds: [
+            8,
+            9
+        ]
+    },
+    {
+        id: 8,
+        parentLayerId: 7,
+        subLayerIds: null
+    },
+    {
+        id: 9,
+        parentLayerId: 7,
+        subLayerIds: null
+    }
+];
+describe('ArcGISUtils', () => {
+    it('isImageServerUrl', () => {
+        expect(isImageServerUrl()).toBeFalsy();
+        expect(isImageServerUrl('https://localhost/arcgis/rest/services/Name/MapServer')).toBeFalsy();
+        expect(isImageServerUrl('https://localhost/arcgis/rest/services/Name/ImageServer')).toBeTruthy();
+    });
+    it('isMapServerUrl', () => {
+        expect(isMapServerUrl()).toBeFalsy();
+        expect(isMapServerUrl('https://localhost/arcgis/rest/services/Name/ImageServer')).toBeFalsy();
+        expect(isMapServerUrl('https://localhost/arcgis/rest/services/Name/MapServer')).toBeTruthy();
+    });
+    it('isFeatureServerUrl', () => {
+        expect(isFeatureServerUrl()).toBeFalsy();
+        expect(isFeatureServerUrl('https://localhost/arcgis/rest/services/Name/MapServer')).toBeFalsy();
+        expect(isFeatureServerUrl('https://localhost/arcgis/rest/services/Name/FeatureServer')).toBeTruthy();
+        expect(isFeatureServerUrl('https://localhost/arcgis/rest/services/Name/FeatureServer/0')).toBeTruthy();
+    });
+    it('esriGeometryTypeToGeoJSON', () => {
+        expect(esriGeometryTypeToGeoJSON('esriGeometryPoint')).toBe('Point');
+        expect(esriGeometryTypeToGeoJSON('esriGeometryMultipoint')).toBe('MultiPoint');
+        expect(esriGeometryTypeToGeoJSON('esriGeometryPolyline')).toBe('MultiLineString');
+        expect(esriGeometryTypeToGeoJSON('esriGeometryPolygon')).toBe('MultiPolygon');
+        expect(esriGeometryTypeToGeoJSON('esriGeometryEnvelope')).toBe('Polygon');
+        expect(esriGeometryTypeToGeoJSON('unknownType')).toBe('GeometryCollection');
+        expect(esriGeometryTypeToGeoJSON(undefined)).toBe('GeometryCollection');
+    });
+    it('getLayerIds', () => {
+        expect(getLayerIds(1)).toEqual(['1']);
+        expect(getLayerIds('1')).toEqual(['1']);
+        expect(getLayerIds(0, layers)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+        expect(getLayerIds(6, layers)).toEqual(['6']);
+        expect(getLayerIds(7, layers)).toEqual(['7', '8', '9']);
+        expect(getLayerIds('', layers)).toEqual(['']);
+        expect(getLayerIds('missing', layers)).toEqual(['missing']);
+    });
+    it('getQueryLayerIds', () => {
+        expect(getQueryLayerIds(1)).toEqual(['1']);
+        expect(getQueryLayerIds('1')).toEqual(['1']);
+        expect(getQueryLayerIds(0, layers)).toEqual(['2', '3', '4', '5', '6', '8', '9']);
+        expect(getQueryLayerIds(6, layers)).toEqual(['6']);
+        expect(getQueryLayerIds(7, layers)).toEqual(['8', '9']);
+        expect(getQueryLayerIds('', layers)).toEqual(['']);
+        expect(getQueryLayerIds('missing', layers)).toEqual(['missing']);
+    });
+    it('esriFieldTypeToPrimitive', () => {
+        expect(esriFieldTypeToPrimitive('esriFieldTypeOID')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeSmallInteger')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeInteger')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeBigInteger')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeSingle')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeDouble')).toBe('number');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeString')).toBe('string');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeGUID')).toBe('string');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeGlobalID')).toBe('string');
+        expect(esriFieldTypeToPrimitive('esriFieldTypeXML')).toBe('string');
+        // Geometry/Date/Blob/Raster/unknown - null
+        expect(esriFieldTypeToPrimitive('esriFieldTypeGeometry')).toBe(null);
+        expect(esriFieldTypeToPrimitive('esriFieldTypeDate')).toBe(null);
+        expect(esriFieldTypeToPrimitive('esriFieldTypeBlob')).toBe(null);
+        expect(esriFieldTypeToPrimitive('esriFieldTypeRaster')).toBe(null);
+        expect(esriFieldTypeToPrimitive(undefined)).toBe(null);
+        expect(esriFieldTypeToPrimitive('undefined')).toBe(null);
+    });
+    it('esriFieldsToAttributes', () => {
+        const fields = [
+            { name: 'OBJECTID', alias: 'OID', type: 'esriFieldTypeOID' },
+            { name: 'name', alias: 'Site name', type: 'esriFieldTypeString' },
+            { name: 'pop', type: 'esriFieldTypeInteger' },
+            // Geometry should be filtered out
+            { name: 'shape', type: 'esriFieldTypeGeometry' },
+            // Date should be filtered out
+            { name: 'date', type: 'esriFieldTypeDate' }
+        ];
+        expect(esriFieldsToAttributes(fields)).toEqual([
+            { attribute: 'OBJECTID', label: 'OID', type: 'number' },
+            { attribute: 'name', label: 'Site name', type: 'string' },
+            { attribute: 'pop', label: 'pop', type: 'number' }
+        ]);
+        expect(esriFieldsToAttributes()).toEqual([]);
+        expect(esriFieldsToAttributes([])).toEqual([]);
+    });
+    it('esriToGeoJSONFeature', () => {
+        expect(esriToGeoJSONFeature())
+            .toEqual({ type: 'Feature', properties: {}, geometry: null });
+        expect(esriToGeoJSONFeature({ attributes: { title: 'Title' } }))
+            .toEqual({ type: 'Feature', properties: { title: 'Title' }, geometry: null });
+        expect(esriToGeoJSONFeature({
+            geometry: {
+                x: -118.15,
+                y: 33.80,
+                spatialReference: { wkid: 4326 }
+            }
+        }))
+            .toEqual({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [ -118.15, 33.8, 0 ] } });
+        expect(esriToGeoJSONFeature({
+            geometry: {
+                x: -118.15,
+                y: 33.80,
+                z: 10,
+                spatialReference: { wkid: 4326 }
+            }
+        }))
+            .toEqual({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [ -118.15, 33.8, 10 ] } });
+        expect(esriToGeoJSONFeature({
+            geometry: {
+                points: [
+                    [
+                        -97.06138,
+                        32.837
+                    ],
+                    [
+                        -97.06133,
+                        32.836
+                    ]
+                ],
+                spatialReference: { wkid: 4326 }
+            }
+        }))
+            .toEqual({ type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: [ [ -97.06138, 32.837, 0 ], [ -97.06133, 32.836, 0 ] ] } });
+        expect(esriToGeoJSONFeature({
+            geometry: {
+                paths: [
+                    [
+                        [-97.06138, 32.837],
+                        [-97.06133, 32.836],
+                        [-97.06124, 32.834],
+                        [-97.06127, 32.832]
+                    ],
+                    [
+                        [-97.06326, 32.759],
+                        [-97.06298, 32.755]
+                    ]
+                ],
+                spatialReference: { wkid: 4326 }
+            }
+        }))
+            .toEqual({ type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates: [ [ [ -97.06138, 32.837, 0 ], [ -97.06133, 32.836, 0 ], [ -97.06124, 32.834, 0 ], [ -97.06127, 32.832, 0 ] ], [ [ -97.06326, 32.759, 0 ], [ -97.06298, 32.755, 0 ] ] ] } });
+        expect(esriToGeoJSONFeature({
+            geometry: {
+                rings: [
+                    [
+                        [-97.06138, 32.837],
+                        [-97.06133, 32.836],
+                        [-97.06124, 32.834],
+                        [-97.06127, 32.832],
+                        [-97.06138, 32.837]
+                    ],
+                    [
+                        [-97.06326, 32.759],
+                        [-97.06298, 32.755],
+                        [-97.06153, 32.749],
+                        [-97.06326, 32.759]
+                    ]
+                ],
+                spatialReference: { wkid: 4326 }
+            }
+        }))
+            .toEqual({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ [ [ -97.06138, 32.837, 0 ], [ -97.06133, 32.836, 0 ], [ -97.06124, 32.834, 0 ], [ -97.06127, 32.832, 0 ], [ -97.06138, 32.837, 0 ] ], [ [ -97.06326, 32.759, 0 ], [ -97.06298, 32.755, 0 ], [ -97.06153, 32.749, 0 ], [ -97.06326, 32.759, 0 ] ] ] } });
+    });
+});
